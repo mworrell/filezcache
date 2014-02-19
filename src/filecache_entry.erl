@@ -30,9 +30,9 @@
 
 % api
 -export([
-        start_link/2,
-        fetch/1,
-        fetch_file/1,
+        start_link/3,
+        fetch/2,
+        fetch_file/2,
         store/2,
         repop/5,
         append_stream/2,
@@ -54,7 +54,8 @@
     wait_for_data/3,
     streaming/2,
     streaming/3,
-    idle/3
+    idle/3,
+    closing/2
     ]).
 
 % For testing
@@ -70,25 +71,26 @@
         checksum,
         checksum_context,
         writer,
+        lockers = [],
         readers = [],
         waiters = []}).
 
 %% API
 
-start_link(Key, Writer) ->
-    gen_fsm:start_link(?MODULE, [Key, Writer], []).
+start_link(Key, Writer, Opts) ->
+    gen_fsm:start_link(?MODULE, [Key, Writer, Opts], []).
 
-fetch(Pid) ->
+fetch(Pid, Opts) ->
     try
-        gen_fsm:sync_send_event(Pid, fetch)
+        gen_fsm:sync_send_event(Pid, {fetch, self(), Opts})
     catch
         exit:{noproc, _} ->
             {error, not_found}
     end.
 
-fetch_file(Pid) ->
+fetch_file(Pid, Opts) ->
     try
-        gen_fsm:sync_send_event(Pid, fetch_file)
+        gen_fsm:sync_send_event(Pid, {fetch_file, self(), Opts})
     catch
         exit:{noproc, _} ->
             {error, not_found}
@@ -108,14 +110,14 @@ finish_stream(Pid) ->
     gen_fsm:send_event(Pid, {stream_finish, self()}).
 
 delete(Pid) ->
-    gen_fsm:send_all_state_event(Pid, delete).
+    gen_fsm:sync_send_all_state_event(Pid, delete).
 
 gc(Pid) ->
     gen_fsm:send_all_state_event(Pid, gc).
 
 %% gen_server callbacks
 
-init([Key, Writer]) ->
+init([Key, WriterPid, Opts]) ->
     Filename = filename(Key),
     State =  #state{key = Key,
                     filename = Filename,
@@ -123,10 +125,10 @@ init([Key, Writer]) ->
                     size = 0,
                     checksum = 0,
                     checksum_context = undefined, 
-                    writer = Writer,
+                    writer = WriterPid,
                     readers = [],
                     waiters = []},
-    {ok, wait_for_data, State}.
+    {ok, wait_for_data, opt_locker(State, Opts, WriterPid)}.
 
 %% Wait till all data is received and stored in the cache file.
 
@@ -167,11 +169,11 @@ wait_for_data({repop, Key, Filename, Size, Checksum}, State) ->
     log_ready(State1),
     {next_state, idle, State1}.
 
-wait_for_data(fetch, From, #state{readers=Readers} = State) ->
+wait_for_data({fetch, Pid, Opts}, From, #state{readers=Readers} = State) ->
     Reply = reply_partial_data(State),
-    {reply, Reply, wait_for_data, State#state{readers=[From|Readers]}};
-wait_for_data(fetch_file, From, #state{waiters=Waiters} = State) ->
-    {next_state, wait_for_data, State#state{waiters=[From|Waiters]}}.
+    {reply, Reply, wait_for_data, opt_locker(State#state{readers=[From|Readers]}, Pid, Opts)};
+wait_for_data({fetch_file, Pid, Opts}, From, #state{waiters=Waiters} = State) ->
+    {next_state, wait_for_data, opt_locker(State#state{waiters=[From|Waiters]}, Pid, Opts)}.
 
 %% Receive data from a stream
 
@@ -188,45 +190,56 @@ streaming({stream_finish, Streamer}, #state{writer=Streamer, fd=FD, readers=Read
     log_ready(State1),
     {next_state, idle, State1}.
 
-streaming(fetch, From, #state{readers=Readers} = State) ->
+streaming({fetch, Pid, Opts}, From, #state{readers=Readers} = State) ->
     Reply = reply_partial_data(State),
-    {reply, Reply, streaming, State#state{readers=[From|Readers]}};
-streaming(fetch_file, From, #state{waiters=Waiters} = State) ->
-    {next_state, streaming, State#state{waiters=[From|Waiters]}}.
+    {reply, Reply, streaming, opt_locker(State#state{readers=[From|Readers]}, Pid, Opts)};
+streaming({fetch_file, Pid, Opts}, From, #state{waiters=Waiters} = State) ->
+    {next_state, streaming, opt_locker(State#state{waiters=[From|Waiters]}, Pid, Opts)}.
 
 %% idle - handle all cache requests
-idle(fetch, _From, #state{filename=Filename, size=Size} = State) ->
+idle({fetch, Pid, Opts}, _From, #state{filename=Filename, size=Size} = State) ->
     filecache_entry_manager:log_access(self()),
-    {reply, {ok, {filename, Size, Filename}}, idle, State};
-idle(fetch_file, _From, #state{filename=Filename, size=Size} = State) ->
+    {reply, {ok, {filename, Size, Filename}}, idle, opt_locker(State, Pid, Opts)};
+idle({fetch_file, Pid, Opts}, _From, #state{filename=Filename, size=Size} = State) ->
     filecache_entry_manager:log_access(self()),
-    {reply, {ok, {filename, Size, Filename}}, idle, State}.
+    {reply, {ok, {filename, Size, Filename}}, idle, opt_locker(State, Pid, Opts)}.
 
+%% Closing down
+closing(timeout, #state{fd=FD, filename=Filename} = State) when FD =/= undefined ->
+    _ = file:close(FD),
+    _ = file:delete(Filename),
+    {stop, normal, State};
+closing(timeout, #state{filename=Filename} = State) ->
+    _ = file:delete(Filename),
+    {stop, normal, State}.
 
 %% All state events: 'gc'
-
 handle_event(gc, wait_for_data, State) ->
     {next_state, wait_for_data, State};
 handle_event(gc, streaming, State) ->
     {next_state, streaming, State};
-handle_event(gs, StateName, State) ->
-    handle_event(delete, StateName, State);
+handle_event(gc, StateName, #state{lockers=Lockers} = State) when Lockers =/= [] ->
+    {next_state, StateName, State};
+handle_event(gc, _StateName, State) ->
+    {next_state, closing, State, 0};
 
-%% All state events: 'delete'
-
-handle_event(delete, StateName, #state{fd=FD} = State) when FD =/= undefined ->
-    _ = file:close(FD),
-    handle_event(delete, StateName, State#state{fd=FD});
-handle_event(delete, _StateName, #state{fd=undefined, filename=Filename} = State) ->
-    _ = file:delete(Filename),
-    {stop, normal, State};
 handle_event(_Event, StateName, State) ->
     {next_state, StateName, State}.
+
+%% All sync state events: 'delete'
+handle_sync_event(delete, _From, StateName, #state{lockers=Lockers} = State) when Lockers =/= [] ->
+    {reply, {error, locked}, StateName, State};
+handle_sync_event(delete, _From, _StateName, State) ->
+    {reply, ok, closing, State, 0};
 
 %% Note: DO NOT reply to unexpected calls. Let the call-maker crash!
 handle_sync_event(_Event, _From, StateName, State) ->
     {next_state, StateName, State}.
 
+%% Remove stopped processes that were locking this entry
+handle_info({'DOWN', MRef, process, _Pid, _Reason}, StateName, State) ->
+    State1 = State#state{lockers=[ M || M <- State#state.lockers, M =/= MRef ]},
+    {next_state, StateName, State1};
 handle_info(_Info, StateName, State) ->
     {next_state, StateName, State}.
 
@@ -275,6 +288,17 @@ send_readers(Pids, Msg) ->
 send_filename(Pids, Size, Filename) ->
     lists:map(fun(Pid) -> Pid ! {filecache, {file, Size, Filename}, self()} end, Pids).
 
+
+opt_locker(State, _Pid, []) ->
+    State;
+opt_locker(State, Pid, Opts) ->
+    case lists:member(lock, Opts) of
+        true ->
+            MRef = erlang:monitor(process, Pid),
+            State#state{lockers=[MRef|State#state.lockers]};
+        false ->
+            State
+    end.
 
 %% @doc We didn't receive all data yet, reply with the data received till now and 
 %%      stream copies of all data received later to the caller.

@@ -25,7 +25,7 @@
 
 -export([
         start_link/0,
-        insert/1,
+        insert/2,
         stats/0,
         log_access/1,
         log_ready/5
@@ -68,8 +68,8 @@ start_link() ->
 stats() ->
     gen_server:call(?MODULE, stats).
 
-insert(Key) ->
-    gen_server:call(?MODULE, {insert, Key, self()}).
+insert(Key, Opts) ->
+    gen_server:call(?MODULE, {insert, Key, self(), Opts}).
 
 log_access(Key) ->
     gen_server:cast(?MODULE, {log_access, Key}).
@@ -91,12 +91,12 @@ init([]) ->
             monitors = gb_trees:empty(), 
             max_bytes = max_bytes()}}.
 
-handle_call({insert, Key, WriterPid}, _From, State) ->
+handle_call({insert, Key, WriterPid, Opts}, _From, State) ->
     case filecache_store:lookup(Key) of
         {ok, Pid} ->
             {reply, {error, {already_started, Pid}}, State};
         {error, not_found} ->
-            {ok, Pid} = filecache_entry_sup:start_child(Key, WriterPid),
+            {ok, Pid} = filecache_entry_sup:start_child(Key, WriterPid, Opts),
             filecache_store:insert(Key, Pid),
             filecache_event:insert(Key),
             Mon = erlang:monitor(process, Pid),
@@ -117,7 +117,7 @@ handle_cast({repop, Key, Filename, Size, Checksum}, State) ->
         {ok, _Pid} ->
             {noreply, State};
         {error, not_found} ->
-            {ok, Pid} = filecache_entry_sup:start_child(Key, self()),
+            {ok, Pid} = filecache_entry_sup:start_child(Key, self(), []),
             filecache_store:insert(Key, Pid),
             Mon = erlang:monitor(process, Pid),
             filecache_entry:repop(Pid, Key, Filename, Size, Checksum),

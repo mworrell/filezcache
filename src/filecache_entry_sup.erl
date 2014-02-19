@@ -19,7 +19,7 @@
 
 -behaviour(supervisor).
 
--export([start_link/0, start_child/2]).
+-export([start_link/0, start_child/3]).
 
 -export([init/1]).
 
@@ -28,8 +28,8 @@
 start_link() ->
     supervisor:start_link({local, ?SERVER}, ?MODULE, []).
 
-start_child(Key, Pid) ->
-    supervisor:start_child(?SERVER, [Key, Pid]).
+start_child(Key, Pid, Opts) ->
+    supervisor:start_child(?SERVER, [Key, Pid, Opts]).
 
 init([]) ->
     Element = {filecache_entry, {filecache_entry, start_link, []},

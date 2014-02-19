@@ -26,6 +26,8 @@
     finish_stream/1,
     lookup/1, 
     lookup_file/1, 
+    lookup/2, 
+    lookup_file/2, 
     delete/1,
 
     stats/0,
@@ -60,20 +62,27 @@ finish_stream(Pid) ->
 
 -spec lookup(term()) -> {ok, {file, integer(), string()}} | {ok, {stream, function()}} | {error, term()}.
 lookup(Key) ->
+    lookup(Key, []).
+
+lookup(Key, Opts) ->
     filecache_event:lookup(Key),
     case filecache_store:lookup(Key) of
         {ok, Pid} ->
-            filecache_entry:fetch(Pid);
+            filecache_entry:fetch(Pid, Opts);
         {error, _} = Error ->
             Error
     end.
 
+-spec lookup_file(term()) -> {ok, {file, integer(), string()}} | {error, term()}.
 lookup_file(Key) ->
+    lookup_file(Key, []).
+
+lookup_file(Key, Opts) ->
     filecache_event:lookup(Key),
     case filecache_store:lookup(Key) of
         {ok, Pid} ->
             try
-                filecache_entry:fetch_file(Pid)
+                filecache_entry:fetch_file(Pid, Opts)
             catch
                 exit:{noproc, _} ->
                     {error, not_found}
@@ -82,12 +91,13 @@ lookup_file(Key) ->
             Error
     end.
 
+-spec delete(term()) -> ok | {error, locked|not_found}.
 delete(Key) ->
     case filecache_store:lookup(Key) of
         {ok, Pid} ->
             filecache_entry:delete(Pid);
-        {error, _Reason} ->
-            ok
+        {error, _Reason} = Error ->
+            Error
     end.
 
 stats() ->
