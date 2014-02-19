@@ -1,5 +1,5 @@
-Filecache - cache webzmachine companion
-=======================================
+Filecache - webzmachine companion
+=================================
 
 This is a file caching system optimized for use with webzmachine.
 
@@ -15,6 +15,29 @@ in `priv/data/` and the disk log in `priv/journal`.
 
 The disk log is used to rebuild the cache after a start. All files are checked against
 the checksum from the disk log, non-matching files are deleted from the cache.
+
+Example
+-------
+
+    $ erl -pa ebin
+    Erlang R15B03 (erts-5.9.3.1) [source] [64-bit] [smp:4:4] [async-threads:0] [kernel-poll:false]
+    Eshell V5.9.3.1  (abort with ^G)
+    1> application:start(crypto).
+    ok
+    2> application:start(filecache).
+    ok
+    3> filecache:lookup(mykey).
+    {error, not_found}
+    4> filecache:insert(mykey, <<"foobar">>).
+    {ok,<0.173.0>}.
+    5> filecache:lookup(mykey).
+    {ok,{filename,6,
+                  "priv/data/4J0I2F06043V5P0V603D4O4I6L1J5M1B4I5Y2B2C606W28131H164Z421M4X6221"}}
+    6> filecache:insert(mykey, <<>>).
+    {error,{already_started,<0.173.0>}}
+    7> filecache:deleye(mykey).
+    ok
+
 
 Configuration keys
 ------------------
