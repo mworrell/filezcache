@@ -4,20 +4,20 @@ APP          := filecache
 .PHONY: deps
 
 all: deps
-    @(./rebar compile)
+	@(./rebar compile)
 
 deps:
-    @(./rebar get-deps)
+	@(./rebar get-deps)
 
 clean:
-    @(./rebar clean)
+	@(./rebar clean)
 
 distclean: clean
-    @(./rebar delete-deps)
+	@(./rebar delete-deps)
 
 edoc:
-    @$(ERL) -noshell -run edoc_run application '$(APP)' '"."' '[{preprocess, true},{includes, ["."]}]'
+	@$(ERL) -noshell -run edoc_run application '$(APP)' '"."' '[{preprocess, true},{includes, ["."]}]'
 
 test: all
-    @(./rebar skip_deps=true eunit)
+	@(./rebar skip_deps=true eunit)
 
