@@ -1,0 +1,19 @@
+%% -*- mode: erlang -*-
+{application, filecache,
+ [{description, "filecache"},
+  {vsn, "0.1.0"},
+  {modules,
+   []},
+  {registered, [
+        filecache_sup,
+        filecache_entry_manager,
+        filecache_entry_sup,
+        filecache_event
+  ]},
+  {mod, {filecache_app, []}},
+  {env, [
+        % {journal_dir, "..."},
+        % {data_dir, "..."}
+        {max_bytes, 10737418240}     % 10GB
+  ]},
+  {applications, [kernel, stdlib, crypto]}]}.
