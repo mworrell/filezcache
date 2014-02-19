@@ -35,7 +35,7 @@ Example
                   "priv/data/4J0I2F06043V5P0V603D4O4I6L1J5M1B4I5Y2B2C606W28131H164Z421M4X6221"}}
     6> filecache:insert(mykey, <<>>).
     {error,{already_started,<0.173.0>}}
-    7> filecache:deleye(mykey).
+    7> filecache:delete(mykey).
     ok
 
 
