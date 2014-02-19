@@ -15,7 +15,7 @@
 %% See the License for the specific language governing permissions and
 %% limitations under the License.
 
--module(filecache_sup).
+-module(filezcache_sup).
 
 -behaviour(supervisor).
 
@@ -31,12 +31,12 @@ start_link() ->
     supervisor:start_link({local, ?SERVER}, ?MODULE, []).
 
 init([]) ->
-    ElementSup = {filecache_entry_sup, {filecache_entry_sup, start_link, []},
-                  permanent, 2000, supervisor, [filecache_entry]},
-    EventManager = {filecache_event, {filecache_event, start_link, []}, 
-                    permanent, 2000, worker, [filecache_event]},
-    EntryManager = {filecache_entry_manager, {filecache_entry_manager, start_link, []},
-                    permanent, 2000, worker, [filecache_entry_manager]},
+    ElementSup = {filezcache_entry_sup, {filezcache_entry_sup, start_link, []},
+                  permanent, 2000, supervisor, [filezcache_entry]},
+    EventManager = {filezcache_event, {filezcache_event, start_link, []}, 
+                    permanent, 2000, worker, [filezcache_event]},
+    EntryManager = {filezcache_entry_manager, {filezcache_entry_manager, start_link, []},
+                    permanent, 2000, worker, [filezcache_entry_manager]},
     Children = [ElementSup, EventManager, EntryManager],
     RestartStrategy = {one_for_one, 4, 3600},
     {ok, {RestartStrategy, Children}}.

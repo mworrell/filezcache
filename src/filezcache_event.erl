@@ -15,7 +15,7 @@
 %% See the License for the specific language governing permissions and
 %% limitations under the License.
 
--module(filecache_event).
+-module(filezcache_event).
 
 -export([start_link/0, add_handler/2, delete_handler/2, lookup/1, insert/1, insert_ready/3, delete/1]).
 

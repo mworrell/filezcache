@@ -15,7 +15,7 @@
 %% See the License for the specific language governing permissions and
 %% limitations under the License.
 
--module(filecache_event_logger).
+-module(filezcache_event_logger).
 
 -behaviour(gen_event).
 
@@ -27,10 +27,10 @@
 
 %% API
 add_handler() ->
-    filecache_event:add_handler(?MODULE, []).
+    filezcache_event:add_handler(?MODULE, []).
 
 delete_handler() ->
-    filecache_event:delete_handler(?MODULE, []).
+    filezcache_event:delete_handler(?MODULE, []).
 
 %% gen_event callbacks
 init([]) ->

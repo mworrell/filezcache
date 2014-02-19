@@ -1,5 +1,5 @@
 ERL          ?= erl
-APP          := filecache
+APP          := filezcache
 
 .PHONY: deps
 

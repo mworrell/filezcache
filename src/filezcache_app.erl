@@ -15,25 +15,20 @@
 %% See the License for the specific language governing permissions and
 %% limitations under the License.
 
--module(filecache_entry_sup).
+-module(filezcache_app).
 
--behaviour(supervisor).
+-behaviour(application).
 
--export([start_link/0, start_child/3]).
+-export([start/2, stop/1]).
 
--export([init/1]).
+start(_StartType, _StartArgs) ->
+    case filezcache_sup:start_link() of
+        {ok, Pid} ->
+            filezcache_event_logger:add_handler(),
+            {ok, Pid};
+        Other ->
+            {error, Other}
+    end.
 
--define(SERVER, ?MODULE).
-
-start_link() ->
-    supervisor:start_link({local, ?SERVER}, ?MODULE, []).
-
-start_child(Key, Pid, Opts) ->
-    supervisor:start_child(?SERVER, [Key, Pid, Opts]).
-
-init([]) ->
-    Element = {filecache_entry, {filecache_entry, start_link, []},
-               temporary, brutal_kill, worker, [filecache_entry]},
-    Children = [Element],
-    RestartStrategy = {simple_one_for_one, 0, 1},
-    {ok, {RestartStrategy, Children}}.
+stop(_State) ->
+    ok.

@@ -1,16 +1,16 @@
 %% -*- mode: erlang -*-
-{application, filecache,
- [{description, "filecache"},
+{application, filezcache,
+ [{description, "FilezCache"},
   {vsn, "0.1.0"},
   {modules,
    []},
   {registered, [
-        filecache_sup,
-        filecache_entry_manager,
-        filecache_entry_sup,
-        filecache_event
+        filezcache_sup,
+        filezcache_entry_manager,
+        filezcache_entry_sup,
+        filezcache_event
   ]},
-  {mod, {filecache_app, []}},
+  {mod, {filezcache_app, []}},
   {env, [
         % {journal_dir, "..."},
         % {data_dir, "..."}

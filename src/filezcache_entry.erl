@@ -22,7 +22,7 @@
 %% - optional: monitor streamer -> if down then terminate this entry
 %% - optional: inform readers/waiters of termination
 
--module(filecache_entry).
+-module(filezcache_entry).
 
 -include_lib("kernel/include/file.hrl").
 
@@ -128,7 +128,7 @@ init([Key, WriterPid, Opts]) ->
                     writer = WriterPid,
                     readers = [],
                     waiters = []},
-    {ok, wait_for_data, opt_locker(State, Opts, WriterPid)}.
+    {ok, wait_for_data, opt_locker(State, WriterPid, Opts)}.
 
 %% Wait till all data is received and stored in the cache file.
 
@@ -198,10 +198,10 @@ streaming({fetch_file, Pid, Opts}, From, #state{waiters=Waiters} = State) ->
 
 %% idle - handle all cache requests
 idle({fetch, Pid, Opts}, _From, #state{filename=Filename, size=Size} = State) ->
-    filecache_entry_manager:log_access(self()),
+    filezcache_entry_manager:log_access(self()),
     {reply, {ok, {filename, Size, Filename}}, idle, opt_locker(State, Pid, Opts)};
 idle({fetch_file, Pid, Opts}, _From, #state{filename=Filename, size=Size} = State) ->
-    filecache_entry_manager:log_access(self()),
+    filezcache_entry_manager:log_access(self()),
     {reply, {ok, {filename, Size, Filename}}, idle, opt_locker(State, Pid, Opts)}.
 
 %% Closing down
@@ -253,12 +253,12 @@ code_change(_OldVsn, StateName, State, _Extra) ->
 %%% Support functions
 
 log_ready(#state{key=Key, filename=Filename, size=Size, checksum=Checksum}) ->
-    filecache_entry_manager:log_ready(self(), Key, Filename, Size, Checksum).
+    filezcache_entry_manager:log_ready(self(), Key, Filename, Size, Checksum).
 
 
 set_file_state(Filename, State) ->
     {ok, FInfo} = file:file_info(Filename),
-    State#state{filename=Filename, size=FInfo#file_info.size, checksum=filecache:checksum(Filename)}.
+    State#state{filename=Filename, size=FInfo#file_info.size, checksum=filezcache:checksum(Filename)}.
 
 send_file_state(#state{readers=Readers, waiters=Waiters, filename=Filename, size=Size} = State) ->
     send_filename(Readers, Size, Filename),
@@ -268,7 +268,7 @@ send_file_state(#state{readers=Readers, waiters=Waiters, filename=Filename, size
 
 filename(Key) ->
     HashS = encode(crypto:sha256(term_to_binary(Key)), 36),
-    filename:join([filecache:data_dir(), HashS]).
+    filename:join([filezcache:data_dir(), HashS]).
 
 encode(Data, Base) when is_binary(Data) ->
     encode(binary_to_list(Data), Base);

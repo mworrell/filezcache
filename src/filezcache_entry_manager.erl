@@ -17,7 +17,7 @@
 
 %%% @doc Manage all entries.
 
--module(filecache_entry_manager).
+-module(filezcache_entry_manager).
 
 -behaviour(gen_server).
 
@@ -83,7 +83,7 @@ log_ready(EntryPid, Key, Filename, Size, Checksum) ->
 init([]) ->
     {A1,A2,A3} = os:timestamp(),
     random:seed(A1, A2, A3),
-    filecache_store:init(),
+    filezcache_store:init(),
     gen_server:cast(self(), log_init),
     timer:send_after(?GC_INTERVAL, gc),
     {ok, #state{
@@ -92,13 +92,13 @@ init([]) ->
             max_bytes = max_bytes()}}.
 
 handle_call({insert, Key, WriterPid, Opts}, _From, State) ->
-    case filecache_store:lookup(Key) of
+    case filezcache_store:lookup(Key) of
         {ok, Pid} ->
             {reply, {error, {already_started, Pid}}, State};
         {error, not_found} ->
-            {ok, Pid} = filecache_entry_sup:start_child(Key, WriterPid, Opts),
-            filecache_store:insert(Key, Pid),
-            filecache_event:insert(Key),
+            {ok, Pid} = filezcache_entry_sup:start_child(Key, WriterPid, Opts),
+            filezcache_store:insert(Key, Pid),
+            filezcache_event:insert(Key),
             Mon = erlang:monitor(process, Pid),
             State1 = State#state{monitors=gb_trees:enter(Mon, {Key, Pid}, State#state.monitors)},
             {reply, {ok, Pid}, State1}
@@ -113,19 +113,19 @@ handle_call(stats, _From, State) ->
     {reply, Stats, State}.
 
 handle_cast({repop, Key, Filename, Size, Checksum}, State) ->
-    case filecache_store:lookup(Key) of
+    case filezcache_store:lookup(Key) of
         {ok, _Pid} ->
             {noreply, State};
         {error, not_found} ->
-            {ok, Pid} = filecache_entry_sup:start_child(Key, self(), []),
-            filecache_store:insert(Key, Pid),
+            {ok, Pid} = filezcache_entry_sup:start_child(Key, self(), []),
+            filezcache_store:insert(Key, Pid),
             Mon = erlang:monitor(process, Pid),
-            filecache_entry:repop(Pid, Key, Filename, Size, Checksum),
+            filezcache_entry:repop(Pid, Key, Filename, Size, Checksum),
             State1 = State#state{monitors=gb_trees:enter(Mon, {Key, Pid}, State#state.monitors)},
             {noreply, State1}
     end;
 handle_cast({delete_if_unused, Key, Filename}, State) ->
-    case filecache_store:lookup(Key) of
+    case filezcache_store:lookup(Key) of
         {ok, _Pid} ->
             nop;
         {error, not_found} ->
@@ -143,7 +143,7 @@ handle_cast(log_init, State) ->
 handle_cast({log_ready, Pid, Key, Filename, Size, Checksum}, #state{log=Log, sizes=SizeTab, bytes=Bytes} = State) ->
     ok = disk_log:log(Log, {log_ready, Key, Filename, Size, Checksum}),
     ets:insert(SizeTab, {Pid,Size}),
-    filecache_event:insert_ready(Key, Size, Filename),
+    filezcache_event:insert_ready(Key, Size, Filename),
     {noreply, State#state{bytes=Size+Bytes}};
 
 %% Remove recently used keys from the eviction pool
@@ -169,8 +169,8 @@ handle_info({'DOWN', MRef, process, Pid, _Reason}, #state{monitors=Monitors, byt
                         [] -> 
                             0
                    end,
-            filecache_store:delete(Key),
-            filecache_event:delete(Key),
+            filezcache_store:delete(Key),
+            filezcache_event:delete(Key),
             {noreply, State#state{monitors = gb_trees:delete(MRef, Monitors), bytes=erlang:max(0,Bytes-Size)}};
         none ->
             {noreply, State} 
@@ -190,9 +190,9 @@ code_change(_OldVsn, State, _Extra) ->
 
 
 open_log() ->
-    LogFile = filename:join([filecache:journal_dir(), "filecache.log"]),
+    LogFile = filename:join([filezcache:journal_dir(), "filezcache.log"]),
     LogArgs = [
-        {name, filecache},
+        {name, filezcache},
         {file, LogFile},
         {size, {?LOG_SIZE, ?LOG_FILES}},
         {type, wrap},
@@ -228,11 +228,11 @@ repop_terms(Terms) ->
     lists:foreach(fun(T) -> repop_term(T) end, Terms).
 
 repop_term({log_ready, Key, Filename, Size, Checksum}) ->
-    case filecache_store:lookup(Key) of
+    case filezcache_store:lookup(Key) of
         {error, not_found} ->
             case file:read_file_info(Filename) of
                 {ok, #file_info{type=regular, size=Size}} ->
-                    case filecache:checksum(Filename) of
+                    case filezcache:checksum(Filename) of
                         Checksum ->
                             gen_server:cast(?MODULE, {repop, Key, Filename, Size, Checksum});
                         _Other ->
@@ -271,7 +271,7 @@ maybe_evict(State) ->
 fill_pool(#state{gc_candidate_pool=Pool, iterator=Iterator} = State, Method) ->
     case length(Pool) < ?GC_POOL_SIZE of
         true ->
-            {Candidates, Iterator1} = filecache_store:iterate(Iterator), 
+            {Candidates, Iterator1} = filezcache_store:iterate(Iterator), 
             Pool1 = fill_pool_1(Pool, Candidates, Method),
             State#state{gc_candidate_pool=Pool1, iterator=Iterator1};
         false ->
@@ -295,7 +295,7 @@ random_evict([]) ->
     [];
 random_evict(Pool) ->
     Victim = lists:nth(random:uniform(length(Pool)), Pool),
-    filecache_entry:delete(Victim),
+    filezcache_entry:delete(Victim),
     [ Pid || Pid <- Pool, Pid =/= Victim ].
 
 max_bytes() ->

@@ -1,4 +1,4 @@
-Filecache - webzmachine companion
+Filezcache - webzmachine companion
 =================================
 
 This is a file caching system optimized for use with webzmachine.
@@ -24,18 +24,18 @@ Example
     Eshell V5.9.3.1  (abort with ^G)
     1> application:start(crypto).
     ok
-    2> application:start(filecache).
+    2> application:start(filezcache).
     ok
-    3> filecache:lookup(mykey).
+    3> filezcache:lookup(mykey).
     {error, not_found}
-    4> filecache:insert(mykey, <<"foobar">>).
+    4> filezcache:insert(mykey, <<"foobar">>).
     {ok,<0.173.0>}.
-    5> filecache:lookup(mykey).
+    5> filezcache:lookup(mykey).
     {ok,{filename,6,
                   "priv/data/4J0I2F06043V5P0V603D4O4I6L1J5M1B4I5Y2B2C606W28131H164Z421M4X6221"}}
-    6> filecache:insert(mykey, <<>>).
+    6> filezcache:insert(mykey, <<>>).
     {error,{already_started,<0.173.0>}}
-    7> filecache:delete(mykey).
+    7> filezcache:delete(mykey).
     ok
 
 
@@ -52,5 +52,5 @@ TODO
 There are some known issues that need to be resolved:
 
  * On startup delete files that are unknown to the disk log
- * Add timeouts to `filecache_entry` states `wait_for_data` and `streaming`
- * Extra intelligence in filecache_entry to prevent evicting active entries during garbage collection
+ * Add timeouts to `filezcache_entry` states `wait_for_data` and `streaming`
+ * Extra intelligence in filezcache_entry to prevent evicting active entries during garbage collection

@@ -15,7 +15,7 @@
 %% See the License for the specific language governing permissions and
 %% limitations under the License.
 
--module(filecache_store).
+-module(filezcache_store).
 
 -export([init/0, insert/2, delete/1, lookup/1, iterate/1]).
 
