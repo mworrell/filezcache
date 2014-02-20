@@ -257,7 +257,7 @@ log_ready(#state{key=Key, filename=Filename, size=Size, checksum=Checksum}) ->
 
 
 set_file_state(Filename, State) ->
-    {ok, FInfo} = file:file_info(Filename),
+    {ok, FInfo} = file:read_file_info(Filename),
     State#state{filename=Filename, size=FInfo#file_info.size, checksum=filezcache:checksum(Filename)}.
 
 send_file_state(#state{readers=Readers, waiters=Waiters, filename=Filename, size=Size} = State) ->
