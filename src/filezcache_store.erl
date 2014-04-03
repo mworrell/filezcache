@@ -31,7 +31,7 @@ insert(Key, Pid) ->
 lookup(Key) ->
     case ets:lookup(?TABLE_ID, Key) of
         [{Key, Pid}] -> {ok, Pid};
-        [] -> {error, not_found}
+        [] -> {error, enoent}
     end.
 
 delete(Pid) when is_pid(Pid) ->

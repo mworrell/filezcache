@@ -22,6 +22,9 @@
 %% - optional: monitor streamer -> if down then terminate this entry
 %% - optional: inform readers/waiters of termination
 
+%% - Replace {stream, ...} with an IODevice.
+%%   On this device we can simulate reads whilst waiting for the incoming data
+
 -module(filezcache_entry).
 
 -include_lib("kernel/include/file.hrl").
@@ -38,11 +41,7 @@
         append_stream/2,
         finish_stream/1,
         delete/1,
-        gc/1,
-
-        stream_fun/3,
-        stream_chunks_fun/3,
-        stream_fun/1
+        gc/1
         ]).
 
 % gen_fsm
@@ -68,12 +67,15 @@
         filename,
         fd,
         size,
+        final_size,
         checksum,
         checksum_context,
-        writer,
+        writer_pid,
+        writer_mon,
         lockers = [],
-        readers = [],
+        devices = [],
         waiters = []}).
+
 
 %% API
 
@@ -82,21 +84,25 @@ start_link(Key, Writer, Opts) ->
 
 fetch(Pid, Opts) ->
     try
-        gen_fsm:sync_send_event(Pid, {fetch, self(), Opts})
+        gen_fsm:sync_send_event(Pid, {fetch, self(), Opts}, infinity)
     catch
         exit:{noproc, _} ->
-            {error, not_found}
+            {error, enoent}
     end.
 
 fetch_file(Pid, Opts) ->
     try
-        gen_fsm:sync_send_event(Pid, {fetch_file, self(), Opts})
+        gen_fsm:sync_send_event(Pid, {fetch_file, self(), Opts}, infinity)
     catch
         exit:{noproc, _} ->
-            {error, not_found}
+            {error, enoent}
     end.
 
--spec store(pid(), {stream_start, pid()}|{data, binary()}|{file, file:filename()}) -> ok.
+-spec store(pid(),
+             {stream_start, pid(), integer()|undefined}
+            |{stream_fun, pid(), function(), integer()|undefined}
+            |{data, binary()}
+            |{file, file:filename()}) -> ok.
 store(Pid, Value) ->
     gen_fsm:send_event(Pid, Value).
 
@@ -110,7 +116,7 @@ finish_stream(Pid) ->
     gen_fsm:send_event(Pid, {stream_finish, self()}).
 
 delete(Pid) ->
-    gen_fsm:sync_send_all_state_event(Pid, delete).
+    gen_fsm:sync_send_all_state_event(Pid, delete, infinity).
 
 gc(Pid) ->
     gen_fsm:send_all_state_event(Pid, gc).
@@ -118,100 +124,124 @@ gc(Pid) ->
 %% gen_server callbacks
 
 init([Key, WriterPid, Opts]) ->
+    process_flag(trap_exit, true),
     Filename = filename(Key),
     State =  #state{key = Key,
                     filename = Filename,
                     fd = undefined,
                     size = 0,
+                    final_size = undefined,
                     checksum = 0,
                     checksum_context = undefined, 
-                    writer = WriterPid,
-                    readers = [],
+                    writer_pid = WriterPid,
+                    writer_mon = erlang:monitor(process, WriterPid), 
+                    devices = [],
                     waiters = []},
     {ok, wait_for_data, opt_locker(State, WriterPid, Opts)}.
 
 %% Wait till all data is received and stored in the cache file.
 
-wait_for_data({data, Data}, #state{readers=Readers, waiters=Waiters, filename=Filename} = State) when is_binary(Data) ->
-    send_readers(Readers, {data, Data}),
+wait_for_data({data, Data}, #state{devices=Devices, waiters=Waiters, filename=Filename} = State) when is_binary(Data) ->
     Size = size(Data),
     ok = file:write_file(Filename, Data),
-    send_filename(Waiters, Size, Filename),
+    send_devices(Devices, {final, Size}),
+    send_waiters(Waiters, Size, Filename),
     State1 = State#state{checksum=crypto:sha(Data), 
                          size=Size,
-                         readers=[]},
+                         final_size=Size,
+                         devices=[]},
     log_ready(State1),
-    {next_state, idle, State1};
+    {next_state, idle, demonitor_writer(State1)};
 wait_for_data({file, Filename}, #state{filename=Filename} = State) ->
     State1 = send_file_state(set_file_state(Filename, State)),
     log_ready(State1),
-    {next_state, idle, State1};
+    {next_state, idle, demonitor_writer(State1)};
 wait_for_data({file, File}, #state{filename=Filename} = State) ->
-    ok = file:copy(File, Filename),
+    {ok, _BytesCopied} = file:copy(File, Filename),
     State1 = send_file_state(set_file_state(Filename, State)),
     log_ready(State1),
-    {next_state, idle, State1};
+    {next_state, idle, demonitor_writer(State1)};
 wait_for_data({tmpfile, TmpFile}, #state{filename=Filename} = State) ->
-    ok = file:rename(TmpFile, Filename),
+    ok = rename(TmpFile, Filename),
     State1 = send_file_state(set_file_state(Filename, State)),
     log_ready(State1),
-    {next_state, idle, State1};
-wait_for_data({stream_start, Streamer}, #state{writer=Streamer, filename=Filename} = State) ->
+    {next_state, idle, demonitor_writer(State1)};
+wait_for_data({stream_fun, Streamer, FinalSize, Fun}, #state{writer_pid=Streamer, filename=Filename} = State) ->
+    Self = self(),
+    Pid = spawn_link(fun() -> Fun(Self) end),
     {ok, FD} = file:open(Filename, [write,binary]),
-    {next_state, streaming, State#state{fd=FD, size=0, checksum_context=crypto:hash_init(sha)}};
+    State1 = (demonitor_writer(State))#state{
+        fd=FD,
+        size=0,
+        writer_pid=Pid,
+        writer_mon=erlang:monitor(process,Pid),
+        final_size=FinalSize,
+        checksum_context=crypto:hash_init(sha)
+    },
+    {next_state, streaming, State1};
+wait_for_data({stream_start, Streamer, FinalSize}, #state{writer_pid=Streamer, filename=Filename} = State) ->
+    {ok, FD} = file:open(Filename, [write,binary]),
+    State1 = State#state{
+        fd=FD,
+        size=0,
+        final_size=FinalSize,
+        checksum_context=crypto:hash_init(sha)
+    },
+    {next_state, streaming, State1};
 wait_for_data({repop, Key, Filename, Size, Checksum}, State) ->
     State1 = State#state{
         key=Key,
         filename=Filename,
         size=Size,
+        final_size=Size,
         checksum=Checksum
     },
-    log_ready(State1),
-    {next_state, idle, State1}.
+    State2 = send_file_state(State1),
+    log_ready(State2),
+    {next_state, idle, demonitor_writer(State2)}.
 
-wait_for_data({fetch, Pid, Opts}, From, #state{readers=Readers} = State) ->
-    Reply = reply_partial_data(State),
-    {reply, Reply, wait_for_data, opt_locker(State#state{readers=[From|Readers]}, Pid, Opts)};
+wait_for_data({fetch, _Pid, _Opts} = Fetch, From, State) ->
+    handle_reply_partial_data(Fetch, From, wait_for_data, State);
 wait_for_data({fetch_file, Pid, Opts}, From, #state{waiters=Waiters} = State) ->
     {next_state, wait_for_data, opt_locker(State#state{waiters=[From|Waiters]}, Pid, Opts)}.
 
 %% Receive data from a stream
 
-streaming({stream_append, Streamer, Data}, #state{writer=Streamer, fd=FD, readers=Readers, size=Size, checksum_context=Ctx} = State) ->
-    send_readers(Readers, {stream, Data}),
+streaming({stream_append, Streamer, Data}, #state{writer_pid=Streamer, fd=FD, devices=Devices, size=Size, checksum_context=Ctx} = State) ->
     ok = file:write(FD, Data),
-    Ctx1 = crypto:hash_update(Ctx, Data), 
-    {next_state, streaming, State#state{checksum_context=Ctx1, size=Size+size(Data)}};
-streaming({stream_finish, Streamer}, #state{writer=Streamer, fd=FD, readers=Readers, waiters=Waiters, checksum_context=Ctx} = State) ->
+    Ctx1 = crypto:hash_update(Ctx, Data),
+    NewSize = Size+size(Data),
+    send_devices(Devices, {stream, NewSize}),
+    {next_state, streaming, State#state{checksum_context=Ctx1, size=NewSize}};
+streaming({stream_finish, Streamer}, #state{writer_pid=Streamer, fd=FD, size=Size, devices=Devices, waiters=Waiters, checksum_context=Ctx} = State) ->
     ok = file:close(FD),
-    send_readers(Readers, {stream, done}),
-    send_filename(Waiters, State#state.size, State#state.filename),
-    State1 = State#state{checksum_context=undefined, fd=undefined, checksum=crypto:hash_final(Ctx), readers=[], waiters=[]},
+    send_devices(Devices, {final, Size}),
+    send_waiters(Waiters, Size, State#state.filename),
+    State1 = State#state{checksum_context=undefined, fd=undefined, final_size=Size, checksum=crypto:hash_final(Ctx), devices=[], waiters=[]},
     log_ready(State1),
-    {next_state, idle, State1}.
+    {next_state, idle, demonitor_writer(State1)}.
 
-streaming({fetch, Pid, Opts}, From, #state{readers=Readers} = State) ->
-    Reply = reply_partial_data(State),
-    {reply, Reply, streaming, opt_locker(State#state{readers=[From|Readers]}, Pid, Opts)};
+streaming({fetch, _Pid, _Opts} = Fetch, From, State) ->
+    handle_reply_partial_data(Fetch, From, streaming, State);
 streaming({fetch_file, Pid, Opts}, From, #state{waiters=Waiters} = State) ->
     {next_state, streaming, opt_locker(State#state{waiters=[From|Waiters]}, Pid, Opts)}.
 
 %% idle - handle all cache requests
 idle({fetch, Pid, Opts}, _From, #state{filename=Filename, size=Size} = State) ->
     filezcache_entry_manager:log_access(self()),
-    {reply, {ok, {filename, Size, Filename}}, idle, opt_locker(State, Pid, Opts)};
+    {reply, {ok, {file, Size, Filename}}, idle, opt_locker(State, Pid, Opts)};
 idle({fetch_file, Pid, Opts}, _From, #state{filename=Filename, size=Size} = State) ->
     filezcache_entry_manager:log_access(self()),
-    {reply, {ok, {filename, Size, Filename}}, idle, opt_locker(State, Pid, Opts)}.
+    {reply, {ok, {file, Size, Filename}}, idle, opt_locker(State, Pid, Opts)}.
 
 %% Closing down
 closing(timeout, #state{fd=FD, filename=Filename} = State) when FD =/= undefined ->
     _ = file:close(FD),
     _ = file:delete(Filename),
-    {stop, normal, State};
+    {stop, normal, State#state{fd=undefined, filename=undefined}};
 closing(timeout, #state{filename=Filename} = State) ->
     _ = file:delete(Filename),
-    {stop, normal, State}.
+    {stop, normal, State#state{filename=undefined}}.
 
 %% All state events: 'gc'
 handle_event(gc, wait_for_data, State) ->
@@ -237,33 +267,59 @@ handle_sync_event(_Event, _From, StateName, State) ->
     {next_state, StateName, State}.
 
 %% Remove stopped processes that were locking this entry
+handle_info({'DOWN', MRef, process, _Pid, _Reason}, _StateName, #state{writer_mon=MRef} = State) ->
+    error_logger:warning_msg("Filezcache entry's writer is down (~p)", [State#state.key]),
+    {stop, normal, State#state{writer_mon=undefined}};
 handle_info({'DOWN', MRef, process, _Pid, _Reason}, StateName, State) ->
     State1 = State#state{lockers=[ M || M <- State#state.lockers, M =/= MRef ]},
     {next_state, StateName, State1};
 handle_info(_Info, StateName, State) ->
     {next_state, StateName, State}.
 
-terminate(_Reason, _StateName, _State) ->
-    ok.
+terminate(_Reason, _StateName, #state{fd=undefined}) ->
+    % Regular shutdown, keep the cache entry
+    ok;
+terminate(_Reason, _StateName, #state{fd=FD, filename=Filename}) ->
+    % Incomplete cache entry, cleanup
+    _ = file:close(FD), 
+    _ = file:delete(Filename),
+    ok. 
 
 code_change(_OldVsn, StateName, State, _Extra) ->
     {ok, StateName, State}.
 
-
+%%% ------------------------------------------------------------------------------------------------------
 %%% Support functions
+%%% ------------------------------------------------------------------------------------------------------
+
+demonitor_writer(#state{writer_mon=undefined} = State) ->
+    State;
+demonitor_writer(#state{writer_mon=MRef} = State) ->
+    erlang:demonitor(MRef), 
+    State#state{
+        writer_pid=undefined,
+        writer_mon=undefined
+    }.
+
+%% @doc We didn't receive all data yet, reply with a io-device which can be used to read the data.
+handle_reply_partial_data({fetch, Pid, Opts}, _From, StateName, 
+                          #state{size=Size, final_size=FinalSize, filename=Filename, devices=Devices} = State) ->
+    {ok, DevicePid} = filezcache_device_sup:start_child(self(), Filename, Size, FinalSize),
+    {reply, {ok, {device, DevicePid}}, StateName, opt_locker(State#state{devices=[DevicePid|Devices]}, Pid, Opts)}.
+
 
 log_ready(#state{key=Key, filename=Filename, size=Size, checksum=Checksum}) ->
     filezcache_entry_manager:log_ready(self(), Key, Filename, Size, Checksum).
 
 
 set_file_state(Filename, State) ->
-    {ok, FInfo} = file:read_file_info(Filename),
-    State#state{filename=Filename, size=FInfo#file_info.size, checksum=filezcache:checksum(Filename)}.
+    Size = filelib:file_size(Filename),
+    State#state{filename=Filename, size=Size, final_size=Size, checksum=filezcache:checksum(Filename)}.
 
-send_file_state(#state{readers=Readers, waiters=Waiters, filename=Filename, size=Size} = State) ->
-    send_filename(Readers, Size, Filename),
-    send_filename(Waiters, Size, Filename),
-    State#state{readers=[], waiters=[]}.
+send_file_state(#state{devices=Devices, waiters=Waiters, filename=Filename, size=Size} = State) ->
+    send_devices(Devices, {final, Size}),
+    send_waiters(Waiters, Size, Filename),
+    State#state{devices=[], waiters=[]}.
 
 
 filename(Key) ->
@@ -282,11 +338,21 @@ encode(Data, Base) when is_list(Data) ->
     lists:flatten([F(I) || I <- Data]).
 
 
-send_readers(Pids, Msg) ->
-    lists:map(fun(Pid) -> Pid ! {filecache, Msg, self()} end, Pids).
+send_devices([], _Msg) ->
+    ok;
+send_devices(Pids, Msg) ->
+    lists:map(fun(Pid) -> 
+                  gen_server:cast(Pid, Msg)
+              end,
+              Pids).
 
-send_filename(Pids, Size, Filename) ->
-    lists:map(fun(Pid) -> Pid ! {filecache, {file, Size, Filename}, self()} end, Pids).
+send_waiters([], _Size, _Filename) ->
+    ok;
+send_waiters(Pids, Size, Filename) ->
+    lists:map(fun({Pid,_Ref}) -> 
+                  Pid ! {filecache, {file, Size, Filename}, self()} 
+              end,
+              Pids).
 
 
 opt_locker(State, _Pid, []) ->
@@ -300,39 +366,13 @@ opt_locker(State, Pid, Opts) ->
             State
     end.
 
-%% @doc We didn't receive all data yet, reply with the data received till now and 
-%%      stream copies of all data received later to the caller.
-reply_partial_data(#state{size=0}) ->
-    Self = self(),
-    {ok, {stream, fun() -> ?MODULE:stream_fun(Self) end}};
-reply_partial_data(#state{filename=Filename, size=Size}) ->
-    Self = self(),
-    {ok, {stream, fun() -> ?MODULE:stream_fun(Filename, Size, Self) end}}.
 
-
--define(CHUNK_SIZE, 65536).
-
-%% @doc First stream the on-disk data, then append the received {stream, ...} messages
-stream_fun(Filename, Size, EntryPid) ->
-    {ok, FD} = file:open(Filename, [read,binary]),
-    stream_chunks_fun(FD, Size, EntryPid).
-
-stream_chunks_fun(FD, 0, EntryPid) ->
-    _ = file:close(FD),
-    stream_fun(EntryPid);
-stream_chunks_fun(FD, Size, EntryPid) ->
-    ChunkSize = erlang:min(Size, ?CHUNK_SIZE),
-    {ok, Data} = file:read(FD, ChunkSize),
-    {Data, fun() -> ?MODULE:stream_chunks_fun(FD, Size - ChunkSize, EntryPid) end}.
-
-stream_fun(EntryPid) ->
-    receive
-        {filecache, {data, Data}, EntryPid} ->
-            {Data, done};
-        {filecache, {file, _Size, _Filename} = File, EntryPid} ->
-            {File, done};
-        {filecache, {stream, done}, EntryPid} ->
-            {<<>>, done};
-        {filecache, {stream, Data}, EntryPid} ->
-            {Data, fun() -> ?MODULE:stream_fun(EntryPid) end}
+rename(TmpFile, Filename) ->
+    case file:rename(TmpFile, Filename) of
+        %% cross-fs rename is not supported by erlang, so copy and delete the file
+        {error, exdev} ->
+            {ok, _BytesCopied} = file:copy(TmpFile, Filename),
+            ok = file:delete(TmpFile);
+        ok -> 
+            ok
     end.

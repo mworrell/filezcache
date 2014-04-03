@@ -27,12 +27,11 @@ Example
     2> application:start(filezcache).
     ok
     3> filezcache:lookup(mykey).
-    {error, not_found}
+    {error, enoent}
     4> filezcache:insert(mykey, <<"foobar">>).
     {ok,<0.173.0>}.
     5> filezcache:lookup(mykey).
-    {ok,{filename,6,
-                  "priv/data/4J0I2F06043V5P0V603D4O4I6L1J5M1B4I5Y2B2C606W28131H164Z421M4X6221"}}
+    {ok,{file,6,"priv/data/4J0I2F06043V5P0V603D4O4I6L1J5M1B4I5Y2B2C606W28131H164Z421M4X6221"}}
     6> filezcache:insert(mykey, <<>>).
     {error,{already_started,<0.173.0>}}
     7> filezcache:delete(mykey).

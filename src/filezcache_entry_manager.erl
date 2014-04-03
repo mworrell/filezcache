@@ -95,7 +95,7 @@ handle_call({insert, Key, WriterPid, Opts}, _From, State) ->
     case filezcache_store:lookup(Key) of
         {ok, Pid} ->
             {reply, {error, {already_started, Pid}}, State};
-        {error, not_found} ->
+        {error, enoent} ->
             {ok, Pid} = filezcache_entry_sup:start_child(Key, WriterPid, Opts),
             filezcache_store:insert(Key, Pid),
             filezcache_event:insert(Key),
@@ -116,7 +116,7 @@ handle_cast({repop, Key, Filename, Size, Checksum}, State) ->
     case filezcache_store:lookup(Key) of
         {ok, _Pid} ->
             {noreply, State};
-        {error, not_found} ->
+        {error, enoent} ->
             {ok, Pid} = filezcache_entry_sup:start_child(Key, self(), []),
             filezcache_store:insert(Key, Pid),
             Mon = erlang:monitor(process, Pid),
@@ -128,7 +128,7 @@ handle_cast({delete_if_unused, Key, Filename}, State) ->
     case filezcache_store:lookup(Key) of
         {ok, _Pid} ->
             nop;
-        {error, not_found} ->
+        {error, enoent} ->
             _ = file:delete(Filename)
     end,
     {noreply, State};
@@ -229,7 +229,7 @@ repop_terms(Terms) ->
 
 repop_term({log_ready, Key, Filename, Size, Checksum}) ->
     case filezcache_store:lookup(Key) of
-        {error, not_found} ->
+        {error, enoent} ->
             case file:read_file_info(Filename) of
                 {ok, #file_info{type=regular, size=Size}} ->
                     case filezcache:checksum(Filename) of

@@ -37,6 +37,8 @@ init([]) ->
                     permanent, 2000, worker, [filezcache_event]},
     EntryManager = {filezcache_entry_manager, {filezcache_entry_manager, start_link, []},
                     permanent, 2000, worker, [filezcache_entry_manager]},
-    Children = [ElementSup, EventManager, EntryManager],
+    DeviceSup = {filezcache_device_sup, {filezcache_device_sup, start_link, []},
+                    permanent, 2000, worker, [filezcache_device]},
+    Children = [ElementSup, EventManager, EntryManager, DeviceSup],
     RestartStrategy = {one_for_one, 4, 3600},
     {ok, {RestartStrategy, Children}}.
