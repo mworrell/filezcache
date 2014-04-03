@@ -24,7 +24,7 @@
 start(_StartType, _StartArgs) ->
     case filezcache_sup:start_link() of
         {ok, Pid} ->
-            filezcache_event_logger:add_handler(),
+            % filezcache_event_logger:add_handler(),
             {ok, Pid};
         Other ->
             {error, Other}
