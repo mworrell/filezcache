@@ -294,6 +294,7 @@ handle_info({'DOWN', MRef, process, _Pid, _Reason}, StateName, State) ->
     State1 = State#state{lockers=[ M || M <- State#state.lockers, M =/= MRef ]},
     {next_state, StateName, State1};
 handle_info(_Info, StateName, State) ->
+    erlang:put(state_name, StateName), 
     {next_state, StateName, State}.
 
 terminate(_Reason, _StateName, #state{fd=undefined}) ->
@@ -384,8 +385,8 @@ send_devices(Pids, Msg) ->
 send_waiters([], _Size, _Filename) ->
     ok;
 send_waiters(Pids, Size, Filename) ->
-    lists:map(fun({Pid,_Ref}) -> 
-                  Pid ! {filecache, {file, Size, Filename}, self()} 
+    lists:map(fun(From) ->
+                    gen_fsm:reply(From, {ok, {file, Size, Filename}})
               end,
               Pids).
 
