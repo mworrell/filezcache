@@ -19,11 +19,7 @@
 %% TODO:
 %% - timeout on idle state for invalidation-check and/or hibernate
 %% - timeout on streaming state
-%% - optional: monitor streamer -> if down then terminate this entry
 %% - optional: inform readers/waiters of termination
-
-%% - Replace {stream, ...} with an IODevice.
-%%   On this device we can simulate reads whilst waiting for the incoming data
 
 -module(filezcache_entry).
 
@@ -54,6 +50,7 @@
     streaming/2,
     streaming/3,
     idle/3,
+    idle/2,
     closing/2
     ]).
 
@@ -74,8 +71,15 @@
         writer_mon,
         lockers = [],
         devices = [],
-        waiters = []}).
+        waiters = [],
+        last_access,
+        last_check}).
 
+% Max every 10secs, we check if our file still exists (usec)
+-define(CHECK_PERIOD, 10000000).
+
+% After 2 seconds the idle loop will hibernate this entry
+-define(HIBERNATE_TIMEOUT, 2000).
 
 %% API
 
@@ -102,7 +106,8 @@ fetch_file(Pid, Opts) ->
              {stream_start, pid(), integer()|undefined}
             |{stream_fun, pid(), function(), integer()|undefined}
             |{data, binary()}
-            |{file, file:filename()}) -> ok.
+            |{file, file:filename()}
+            |{tmpfile, file:filename()}) -> ok.
 store(Pid, Value) ->
     gen_fsm:send_event(Pid, Value).
 
@@ -126,6 +131,7 @@ gc(Pid) ->
 init([Key, WriterPid, Opts]) ->
     process_flag(trap_exit, true),
     Filename = filename(Key),
+    Now = os:timestamp(),
     State =  #state{key = Key,
                     filename = Filename,
                     fd = undefined,
@@ -136,7 +142,9 @@ init([Key, WriterPid, Opts]) ->
                     writer_pid = WriterPid,
                     writer_mon = erlang:monitor(process, WriterPid), 
                     devices = [],
-                    waiters = []},
+                    waiters = [],
+                    last_access = Now,
+                    last_check = Now},
     {ok, wait_for_data, opt_locker(State, WriterPid, Opts)}.
 
 %% Wait till all data is received and stored in the cache file.
@@ -151,21 +159,21 @@ wait_for_data({data, Data}, #state{devices=Devices, waiters=Waiters, filename=Fi
                          final_size=Size,
                          devices=[]},
     log_ready(State1),
-    {next_state, idle, demonitor_writer(State1)};
+    {next_state, idle, demonitor_writer(State1), ?HIBERNATE_TIMEOUT};
 wait_for_data({file, Filename}, #state{filename=Filename} = State) ->
     State1 = send_file_state(set_file_state(Filename, State)),
     log_ready(State1),
-    {next_state, idle, demonitor_writer(State1)};
+    {next_state, idle, demonitor_writer(State1), ?HIBERNATE_TIMEOUT};
 wait_for_data({file, File}, #state{filename=Filename} = State) ->
     {ok, _BytesCopied} = file:copy(File, Filename),
     State1 = send_file_state(set_file_state(Filename, State)),
     log_ready(State1),
-    {next_state, idle, demonitor_writer(State1)};
+    {next_state, idle, demonitor_writer(State1), ?HIBERNATE_TIMEOUT};
 wait_for_data({tmpfile, TmpFile}, #state{filename=Filename} = State) ->
     ok = rename(TmpFile, Filename),
     State1 = send_file_state(set_file_state(Filename, State)),
     log_ready(State1),
-    {next_state, idle, demonitor_writer(State1)};
+    {next_state, idle, demonitor_writer(State1), ?HIBERNATE_TIMEOUT};
 wait_for_data({stream_fun, Streamer, FinalSize, Fun}, #state{writer_pid=Streamer, filename=Filename} = State) ->
     Self = self(),
     Pid = spawn_link(fun() -> Fun(Self) end),
@@ -198,7 +206,7 @@ wait_for_data({repop, Key, Filename, Size, Checksum}, State) ->
     },
     State2 = send_file_state(State1),
     log_ready(State2),
-    {next_state, idle, demonitor_writer(State2)}.
+    {next_state, idle, demonitor_writer(State2), ?HIBERNATE_TIMEOUT}.
 
 wait_for_data({fetch, _Pid, _Opts} = Fetch, From, State) ->
     handle_reply_partial_data(Fetch, From, wait_for_data, State);
@@ -219,7 +227,7 @@ streaming({stream_finish, Streamer}, #state{writer_pid=Streamer, fd=FD, size=Siz
     send_waiters(Waiters, Size, State#state.filename),
     State1 = State#state{checksum_context=undefined, fd=undefined, final_size=Size, checksum=crypto:hash_final(Ctx), devices=[], waiters=[]},
     log_ready(State1),
-    {next_state, idle, demonitor_writer(State1)}.
+    {next_state, idle, demonitor_writer(State1), ?HIBERNATE_TIMEOUT}.
 
 streaming({fetch, _Pid, _Opts} = Fetch, From, State) ->
     handle_reply_partial_data(Fetch, From, streaming, State);
@@ -227,12 +235,19 @@ streaming({fetch_file, Pid, Opts}, From, #state{waiters=Waiters} = State) ->
     {next_state, streaming, opt_locker(State#state{waiters=[From|Waiters]}, Pid, Opts)}.
 
 %% idle - handle all cache requests
-idle({fetch, Pid, Opts}, _From, #state{filename=Filename, size=Size} = State) ->
+idle({Fetch, Pid, Opts}, _From, #state{filename=Filename, size=Size} = State) when Fetch =:= fetch; Fetch =:= fetch_file ->
     filezcache_entry_manager:log_access(self()),
-    {reply, {ok, {file, Size, Filename}}, idle, opt_locker(State, Pid, Opts)};
-idle({fetch_file, Pid, Opts}, _From, #state{filename=Filename, size=Size} = State) ->
-    filezcache_entry_manager:log_access(self()),
-    {reply, {ok, {file, Size, Filename}}, idle, opt_locker(State, Pid, Opts)}.
+    case maybe_check_filename(os:timestamp(), State) of
+        {ok, State1} ->
+            {reply, {ok, {file, Size, Filename}}, idle, opt_locker(State1, Pid, Opts), ?HIBERNATE_TIMEOUT};
+        {error, _} = Error ->
+            lager:warning("Filezcache file error ~p on ~p", [Error, Filename]),
+            {reply, Error, closing, State, 0}
+    end.
+
+idle(timeout, State) ->
+    {next_state, idle, State, hibernate}.
+
 
 %% Closing down
 closing(timeout, #state{fd=FD, filename=Filename} = State) when FD =/= undefined ->
@@ -300,6 +315,21 @@ demonitor_writer(#state{writer_mon=MRef} = State) ->
         writer_pid=undefined,
         writer_mon=undefined
     }.
+
+maybe_check_filename(Now, State) ->
+    IsCheckTime = timer:now_diff(Now, State#state.last_check) >  ?CHECK_PERIOD,
+    maybe_check_filename1(IsCheckTime, Now, State).
+
+maybe_check_filename1(false, Now, #state{filename=Filename} = State) ->
+    case filelib:is_regular(Filename) of
+        false ->
+            {error, enoent};
+        true ->
+            {ok, State#state{last_check = Now, last_access = Now}}
+    end;
+maybe_check_filename1(true, Now, State) ->
+    {ok, State#state{last_access = Now}}.
+
 
 %% @doc We didn't receive all data yet, reply with a io-device which can be used to read the data.
 handle_reply_partial_data({fetch, Pid, Opts}, _From, StateName, 
