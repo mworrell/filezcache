@@ -121,7 +121,12 @@ finish_stream(Pid) ->
     gen_fsm:send_event(Pid, {stream_finish, self()}).
 
 delete(Pid) ->
-    gen_fsm:sync_send_all_state_event(Pid, delete, infinity).
+    try
+        gen_fsm:sync_send_all_state_event(Pid, delete, infinity)
+    catch
+        exit:{noproc, _} ->
+            {error, noproc}
+    end.
 
 gc(Pid) ->
     gen_fsm:send_all_state_event(Pid, gc).
