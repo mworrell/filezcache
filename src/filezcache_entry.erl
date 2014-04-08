@@ -359,8 +359,10 @@ send_file_state(#state{devices=Devices, waiters=Waiters, filename=Filename, size
 
 
 filename(Key) ->
-    HashS = encode(crypto:sha256(term_to_binary(Key)), 36),
-    filename:join([filezcache:data_dir(), HashS]).
+    [ A1,A2,B1,B2 | HashS ] = encode(crypto:sha256(term_to_binary(Key)), 36),
+    Filename = filename:join([filezcache:data_dir(), [A1,A2], [B1,B2], HashS]),
+    ok = filelib:ensure_dir(Filename),
+    Filename. 
 
 encode(Data, Base) when is_binary(Data) ->
     encode(binary_to_list(Data), Base);
