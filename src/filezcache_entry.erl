@@ -122,7 +122,16 @@ finish_stream(Pid) ->
 
 delete(Pid) ->
     try
-        gen_fsm:sync_send_all_state_event(Pid, delete, infinity)
+        case gen_fsm:sync_send_all_state_event(Pid, delete, infinity) of
+            ok ->
+                MRef = erlang:monitor(process, Pid),
+                receive
+                    {'DOWN', MRef, process, Pid, _Reason} ->
+                        ok
+                end;
+            Other ->
+                Other
+        end
     catch
         exit:{noproc, _} ->
             {error, noproc}
