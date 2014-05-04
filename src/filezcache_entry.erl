@@ -168,7 +168,7 @@ wait_for_data({data, Data}, #state{devices=Devices, waiters=Waiters, filename=Fi
     ok = file:write_file(Filename, Data),
     send_devices(Devices, {final, Size}),
     send_waiters(Waiters, Size, Filename),
-    State1 = State#state{checksum=crypto:sha(Data), 
+    State1 = State#state{checksum=crypto:hash(sha, Data), 
                          size=Size,
                          final_size=Size,
                          devices=[]},
@@ -368,7 +368,7 @@ send_file_state(#state{devices=Devices, waiters=Waiters, filename=Filename, size
 
 
 filename(Key) ->
-    [ A1,A2,B1,B2 | HashS ] = encode(crypto:sha256(term_to_binary(Key)), 36),
+    [ A1,A2,B1,B2 | HashS ] = encode(crypto:hash(sha256, term_to_binary(Key)), 36),
     Filename = filename:join([filezcache:data_dir(), [A1,A2], [B1,B2], HashS]),
     ok = filelib:ensure_dir(Filename),
     Filename. 
