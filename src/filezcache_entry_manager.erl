@@ -54,6 +54,8 @@
 -define(LOG_SIZE, 1000000).
 -define(LOG_FILES, 5).
 
+-define(TIMEOUT, 20000).
+
 % Garbage collection setings
 -define(GC_INTERVAL, 1000). 
 -define(GC_MAX_BYTES, 10737418240).
@@ -69,7 +71,7 @@ stats() ->
     gen_server:call(?MODULE, stats).
 
 insert(Key, Opts) ->
-    gen_server:call(?MODULE, {insert, Key, self(), Opts}).
+    gen_server:call(?MODULE, {insert, Key, self(), Opts}, ?TIMEOUT).
 
 log_access(Key) ->
     gen_server:cast(?MODULE, {log_access, Key}).
