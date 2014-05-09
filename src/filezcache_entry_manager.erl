@@ -191,6 +191,7 @@ code_change(_OldVsn, State, _Extra) ->
 
 open_log() ->
     LogFile = filename:join([filezcache:journal_dir(), "filezcache.log"]),
+    filelib:ensure_dir(LogFile),
     LogArgs = [
         {name, filezcache},
         {file, LogFile},
@@ -202,7 +203,10 @@ open_log() ->
         {ok, Log} ->
             {ok, Log};
         {repaired, Log, {recovered, _Rec}, {badbytes, _Bad}} ->
-            {ok, Log}
+            {ok, Log};
+        {error,{file_error, _, enoent}} ->
+            lager:error("Could not open disk log ~p", [LogFile]),
+            {error, enoent}
     end.
 
 
