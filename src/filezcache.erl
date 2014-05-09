@@ -85,7 +85,7 @@ append_stream(Pid, Bin) ->
 finish_stream(Pid) ->
     filezcache_entry:finish_stream(Pid).
 
--spec lookup(term()) -> {ok, {file, integer(), string()}} | {ok, {stream, function()}} | {error, term()}.
+-spec lookup(term()) -> {ok, {file, integer(), string()}} | {ok, {device, pid()}} | {error, term()}.
 lookup(Key) ->
     lookup(Key, []).
 
