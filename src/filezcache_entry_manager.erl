@@ -238,12 +238,13 @@ repop_term({log_ready, Key, Filename, Size, Checksum}) ->
         {error, enoent} ->
             case file:read_file_info(Filename) of
                 {ok, #file_info{type=regular, size=Size}} ->
-                    case filezcache:checksum(Filename) of
-                        Checksum ->
-                            gen_server:cast(?MODULE, {repop, Key, Filename, Size, Checksum});
-                        _Other ->
-                            gen_server:cast(?MODULE, {delete_if_unused, Key, Filename})
-                    end;
+                    gen_server:cast(?MODULE, {repop, Key, Filename, Size, Checksum});
+                    % case filezcache:checksum(Filename) of
+                    %     Checksum ->
+                    %         gen_server:cast(?MODULE, {repop, Key, Filename, Size, Checksum});
+                    %     _Other ->
+                    %         gen_server:cast(?MODULE, {delete_if_unused, Key, Filename})
+                    % end;
                 {ok, #file_info{type=regular}} ->
                     gen_server:cast(?MODULE, {delete_if_unused, Key, Filename});
                 _Other ->
