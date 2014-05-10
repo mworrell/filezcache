@@ -54,7 +54,7 @@
 -define(LOG_SIZE, 1000000).
 -define(LOG_FILES, 5).
 
--define(TIMEOUT, 20000).
+-define(TIMEOUT, infinity).
 
 % Garbage collection setings
 -define(GC_INTERVAL, 1000). 
