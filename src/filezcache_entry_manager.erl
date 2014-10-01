@@ -51,8 +51,9 @@
     max_bytes :: integer() 
     }).
 
--define(LOG_SIZE, 1000000).
--define(LOG_FILES, 5).
+%% Size of the disk-log containing the file administration.
+-define(LOG_SIZE, 10000000).
+-define(LOG_FILES, 20).
 
 -define(TIMEOUT, infinity).
 
