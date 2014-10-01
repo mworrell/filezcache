@@ -1,3 +1,4 @@
 ebin/*.app
 ebin/*.beam
 priv/
+.rebar/
