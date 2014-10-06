@@ -40,20 +40,27 @@
     code_change/3
     ]).
 
+-export([
+    ensure_tables/0
+    ]).
+
+-record(filezcache_log_entry, {
+        key,
+        filename,
+        size,
+        checksum
+    }).
+
 
 -record(state, {
     monitors,
     sizes,
-    log,
     iterator = start,
     gc_candidate_pool = [] :: list(pid()),
     bytes = 0 :: integer(),
     max_bytes :: integer() 
     }).
 
-%% Size of the disk-log containing the file administration.
--define(LOG_SIZE, 10000000).
--define(LOG_FILES, 20).
 
 -define(TIMEOUT, infinity).
 
@@ -66,6 +73,7 @@
 %% API
 
 start_link() ->
+    ok = ensure_tables(),
     gen_server:start_link({local, ?MODULE}, ?MODULE, [], []).
 
 stats() ->
@@ -115,6 +123,14 @@ handle_call(stats, _From, State) ->
     ],
     {reply, Stats, State}.
 
+handle_cast({repop, Key, Filename, undefined, _Checksum}, State) ->
+    case filezcache_store:lookup(Key) of
+        {ok, _Pid} ->
+            ok;
+        {error, enoent} ->
+            delete(Key, Filename)
+    end,
+    {noreply, State};
 handle_cast({repop, Key, Filename, Size, Checksum}, State) ->
     case filezcache_store:lookup(Key) of
         {ok, _Pid} ->
@@ -132,22 +148,24 @@ handle_cast({delete_if_unused, Key, Filename}, State) ->
         {ok, _Pid} ->
             nop;
         {error, enoent} ->
-            _ = file:delete(Filename)
+            delete(Key, Filename)
     end,
     {noreply, State};
 
 
 handle_cast(log_init, State) ->
-    {ok, Log} = open_log(),
-    proc_lib:spawn_link(fun() -> repopulate(Log) end),
-    {noreply, State#state{log=Log}};
+    proc_lib:spawn_link(fun() -> repopulate() end),
+    {noreply, State};
 
-%% Log a valid cache entry to the disk log
-handle_cast({log_ready, Pid, Key, Filename, Size, Checksum}, #state{log=Log, sizes=SizeTab, bytes=Bytes} = State) ->
-    ok = disk_log:log(Log, {log_ready, Key, Filename, Size, Checksum}),
+%% Log a cache entry to the disk log
+handle_cast({log_ready, Pid, Key, Filename, Size, Checksum}, #state{sizes=SizeTab, bytes=Bytes} = State) ->
+    F = fun() ->
+            mnesia:write(#filezcache_log_entry{key=Key, filename=Filename, size=Size, checksum=Checksum})
+        end,
+    mnesia:activity(transaction, F), 
     ets:insert(SizeTab, {Pid,Size}),
     filezcache_event:insert_ready(Key, Size, Filename),
-    {noreply, State#state{bytes=Size+Bytes}};
+    {noreply, State#state{bytes=Bytes + case Size of undefined -> 0; _ -> Size end}};
 
 %% Remove recently used keys from the eviction pool
 handle_cast({log_access, Pid}, #state{gc_candidate_pool=Pool} = State) ->
@@ -172,6 +190,7 @@ handle_info({'DOWN', MRef, process, Pid, _Reason}, #state{monitors=Monitors, byt
                         [] -> 
                             0
                    end,
+            delete(Key),
             filezcache_store:delete(Key),
             filezcache_event:delete(Key),
             {noreply, State#state{monitors = gb_trees:delete(MRef, Monitors), bytes=erlang:max(0,Bytes-Size)}};
@@ -192,61 +211,46 @@ code_change(_OldVsn, State, _Extra) ->
     {ok, State}.
 
 
-open_log() ->
-    LogFile = filename:join([filezcache:journal_dir(), "filezcache.log"]),
-    filelib:ensure_dir(LogFile),
-    LogArgs = [
-        {name, filezcache},
-        {file, LogFile},
-        {size, {?LOG_SIZE, ?LOG_FILES}},
-        {type, wrap},
-        {mode, read_write}
+%% @doc Ensure that the proper filezcache_log table has been created
+ensure_tables() ->
+    TabDef = [
+        {type, set},
+        {disc_copies, [node()]},
+        {record_name, filezcache_log_entry},
+        {index, [#filezcache_log_entry.filename]},
+        {attributes, record_info(fields, filezcache_log_entry)}
     ],
-    case disk_log:open(LogArgs) of
-        {ok, Log} ->
-            {ok, Log};
-        {repaired, Log, {recovered, _Rec}, {badbytes, _Bad}} ->
-            {ok, Log};
-        {error,{file_error, _, enoent}} ->
-            lager:error("Could not open disk log ~p", [LogFile]),
-            {error, enoent}
+    case mnesia:create_table(filezcache_log_entry, TabDef) of
+        {atomic, ok} -> ok;
+        {aborted, {already_exists, filezcache_log_entry}} -> ok
     end.
 
 
-%% @doc Repopulates the cache using the disk-log and the data files
-repopulate(Log) ->
-    disk_log:block(Log),
-    repop_loop(Log, disk_log:chunk(Log, start)).
+%% @doc Repopulates the cache using the log
+repopulate() ->
+    Keys = mnesia:dirty_all_keys(filezcache_log_entry), 
+    error_logger:info_msg("filezcache: repopulating cache with ~p keys", [length(Keys)]),
+    repopulate(Keys),
+    error_logger:info_msg("filezcache: scanning cache directory for unknown files."),
+    scan_cache().
 
-repop_loop(Log, eof) ->
-    disk_log:unblock(Log),
+repopulate([]) ->
     ok;
-repop_loop(Log, {error, _Error}) ->
-    disk_log:unblock(Log),
-    ok;
-repop_loop(Log, {Cont, Terms}) ->
-    repop_terms(Terms),
-    repop_loop(Log, disk_log:chunk(Log, Cont));
-repop_loop(Log, {Cont, Terms, _BadBytes}) ->
-    repop_terms(Terms),
-    repop_loop(Log, disk_log:chunk(Log, Cont)).
+repopulate([Key|Keys]) ->
+    F = fun() ->
+            mnesia:read(filezcache_log_entry, Key)
+        end,
+    Rs = mnesia:activity(transaction, F),
+    lists:foreach(fun repop_term/1, Rs),
+    repopulate(Keys).
 
-repop_terms(Terms) ->
-    lists:foreach(fun(T) -> repop_term(T) end, Terms).
-
-repop_term({log_ready, Key, Filename, Size, Checksum}) ->
+repop_term(#filezcache_log_entry{key=Key, filename=Filename, size=Size, checksum=Checksum}) ->
     case filezcache_store:lookup(Key) of
         {error, enoent} ->
             case file:read_file_info(Filename) of
                 {ok, #file_info{type=regular, size=Size}} ->
                     gen_server:cast(?MODULE, {repop, Key, Filename, Size, Checksum});
-                    % case filezcache:checksum(Filename) of
-                    %     Checksum ->
-                    %         gen_server:cast(?MODULE, {repop, Key, Filename, Size, Checksum});
-                    %     _Other ->
-                    %         gen_server:cast(?MODULE, {delete_if_unused, Key, Filename})
-                    % end;
-                {ok, #file_info{type=regular}} ->
+                {ok, #file_info{type=regular, size=_OtherSize}} ->
                     gen_server:cast(?MODULE, {delete_if_unused, Key, Filename});
                 _Other ->
                     nop
@@ -257,15 +261,73 @@ repop_term({log_ready, Key, Filename, Size, Checksum}) ->
 repop_term(_Term) ->
     ok.
 
+%% @doc Scan the cache directories, remove all files not in the log
+scan_cache() ->
+    scan_dir(filezcache:data_dir()).
+
+scan_dir(Dir) ->
+    case file:list_dir(Dir) of
+        {ok, Files} ->
+            scan_files(Dir, Files);
+        {error, _} ->
+            ok
+    end. 
+
+scan_files(_Dir, []) ->
+    ok;
+scan_files(Dir, ["."++_|Fs]) ->
+    scan_files(Dir, Fs);
+scan_files(Dir, [F|Fs]) ->
+    Path = filename:join(Dir, F),
+    case filelib:is_regular(Path) of
+        true ->
+            case find_by_filename(Path) of
+                [] -> file:delete(Path);
+                [_|_] -> ok
+            end;
+        false ->
+            scan_dir(Path)
+    end,
+    scan_files(Dir, Fs).
+
+
+%% @doc Delete an entry by key
+delete(Key) ->
+    F = fun() ->
+            mnesia:read(filezcache_log_entry, Key)
+        end,
+    case mnesia:activity(transaction, F) of
+        [] -> 
+            ok;
+        [#filezcache_log_entry{key=Key,filename=Filename}] ->
+            delete(Key,Filename)
+    end.
+
+%% @doc Delete an entry and its associated cache file.
+delete(Key, Filename) ->
+    F = fun() ->
+            mnesia:delete({filezcache_log_entry, Key})
+        end,
+    mnesia:activity(transaction, F),
+    _ = file:delete(Filename),
+    ok.
+
+%% @doc Find an entry by the cached file
+find_by_filename(Path) ->
+    F = fun() ->
+            mnesia:index_read(filezcache_log_entry, Path, #filezcache_log_entry.filename)
+        end,
+    mnesia:activity(transaction, F).
+
 
 %% @doc Perform a gc step, keep eviction pool with gc-candidates populated
 do_gc(State) ->
     State1 = maybe_evict(State),
-    fill_pool(State1, normal).
+    fill_pool(State1, normal, 1).
 
 maybe_evict(#state{gc_candidate_pool=[], bytes=Bytes} = State) ->
     case Bytes > max_bytes() of
-        true -> do_gc(fill_pool(State, eager));
+        true -> do_gc(fill_pool(State, eager, 1));
         false -> State
     end;
 maybe_evict(#state{gc_candidate_pool=Pool, bytes=Bytes} = State) ->
@@ -276,12 +338,17 @@ maybe_evict(#state{gc_candidate_pool=Pool, bytes=Bytes} = State) ->
 maybe_evict(State) ->
     State.
 
-fill_pool(#state{gc_candidate_pool=Pool, iterator=Iterator} = State, Method) ->
+
+fill_pool(State, _Method, 20) ->
+    State;
+fill_pool(State, normal, 2) ->
+    State;
+fill_pool(#state{gc_candidate_pool=Pool, iterator=Iterator} = State, Method, N) ->
     case length(Pool) < ?GC_POOL_SIZE of
         true ->
             {Candidates, Iterator1} = filezcache_store:iterate(Iterator), 
             Pool1 = fill_pool_1(Pool, Candidates, Method),
-            State#state{gc_candidate_pool=Pool1, iterator=Iterator1};
+            fill_pool(State#state{gc_candidate_pool=Pool1, iterator=Iterator1}, Method, N+1);
         false ->
             State
     end.
@@ -307,7 +374,7 @@ random_evict(Pool) ->
     [ Pid || Pid <- Pool, Pid =/= Victim ].
 
 max_bytes() ->
-    case application:get_env(filecache, max_bytes) of
+    case application:get_env(filezcache, max_bytes) of
         undefined -> ?GC_MAX_BYTES;
         {ok, N} when is_integer(N) -> N
     end.

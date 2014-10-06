@@ -22,6 +22,7 @@
 -export([start/2, stop/1]).
 
 start(_StartType, _StartArgs) ->
+	ensure_mnesia_dir(),
     case filezcache_sup:start_link() of
         {ok, Pid} ->
             % filezcache_event_logger:add_handler(),
@@ -32,3 +33,15 @@ start(_StartType, _StartArgs) ->
 
 stop(_State) ->
     ok.
+
+
+ensure_mnesia_dir() ->
+	{ok, Dir} = application:get_env(mnesia, dir),
+	case filelib:is_dir(Dir) of
+		true ->
+			ok;
+		false ->
+			_ = mnesia:stop(),
+			mnesia:create_schema([node()]),
+			_ = mnesia:start() 
+	end.

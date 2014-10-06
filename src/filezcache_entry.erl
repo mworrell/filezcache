@@ -159,6 +159,8 @@ init([Key, WriterPid, Opts]) ->
                     waiters = [],
                     last_access = Now,
                     last_check = Now},
+    % Ensure that a log entry has been made, but with 'undefined' size
+    log_ready(State),
     {ok, wait_for_data, opt_locker(State, WriterPid, Opts)}.
 
 %% Wait till all data is received and stored in the cache file.
@@ -353,8 +355,8 @@ handle_reply_partial_data({fetch, Pid, Opts}, _From, StateName,
     {reply, {ok, {device, DevicePid}}, StateName, opt_locker(State#state{devices=[DevicePid|Devices]}, Pid, Opts)}.
 
 
-log_ready(#state{key=Key, filename=Filename, size=Size, checksum=Checksum}) ->
-    filezcache_entry_manager:log_ready(self(), Key, Filename, Size, Checksum).
+log_ready(#state{key=Key, filename=Filename, final_size=FinalSize, checksum=Checksum}) ->
+    filezcache_entry_manager:log_ready(self(), Key, Filename, FinalSize, Checksum).
 
 
 set_file_state(Filename, State) ->

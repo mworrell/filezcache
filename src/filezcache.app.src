@@ -12,7 +12,6 @@
   ]},
   {mod, {filezcache_app, []}},
   {env, [
-        % {journal_dir, "..."},
         % {data_dir, "..."}
         {max_bytes, 10737418240}     % 10GB
   ]},
