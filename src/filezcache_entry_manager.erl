@@ -215,10 +215,13 @@ code_change(_OldVsn, State, _Extra) ->
 ensure_tables() ->
     TabDef = [
         {type, set},
-        {disc_copies, [node()]},
         {record_name, filezcache_log_entry},
         {index, [#filezcache_log_entry.filename]},
         {attributes, record_info(fields, filezcache_log_entry)}
+        | case application:get_env(mnesia, dir) of
+             {ok, _} -> [ {disc_copies, [node()]} ];
+             undefined -> []
+          end
     ],
     case mnesia:create_table(filezcache_log_entry, TabDef) of
         {atomic, ok} -> ok;
