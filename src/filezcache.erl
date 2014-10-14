@@ -30,6 +30,8 @@
     insert_stream/4,
     append_stream/2,
     finish_stream/1,
+    locate_monitor/1,
+    access/1,
     lookup/1, 
     lookup_file/1, 
     lookup/2, 
@@ -85,6 +87,25 @@ append_stream(Pid, Bin) ->
 finish_stream(Pid) ->
     filezcache_entry:finish_stream(Pid).
 
+-spec locate_monitor(term()) -> {ok, {file, integer(), string()}} | {ok, {pid, pid()}} | {error, term()}.
+locate_monitor(Key) ->
+    case filezcache_entry_manager:lookup(Key, self()) of
+        {ok, _Found} = OK ->
+            OK;
+        {error, enoent} ->
+            case where(Key) of
+                undefined ->
+                    {error, enoent};
+                Pid ->
+                    filezcache_entry_manager:log_access(Key, self()),
+                    {ok, {pid, Pid}}
+            end
+    end.
+
+-spec access(term()) -> ok.
+access(Key) ->
+    filezcache_entry_manager:log_access(Key). 
+
 -spec lookup(term()) -> {ok, {file, integer(), string()}} | {ok, {device, pid()}} | {error, term()}.
 lookup(Key) ->
     lookup(Key, []).
@@ -93,9 +114,16 @@ lookup(Pid, Opts) when is_pid(Pid) ->
     filezcache_entry:fetch(Pid, Opts);
 lookup(Key, Opts) ->
     filezcache_event:lookup(Key),
-    case filezcache_store:lookup(Key) of
-        {ok, Pid} ->
-            filezcache_entry:fetch(Pid, Opts);
+    case filezcache_entry_manager:lookup(Key) of
+        {ok, _Found} = OK ->
+            OK;
+        {error, enoent} ->
+            case filezcache_store:lookup(Key) of
+                {ok, Pid} ->
+                    filezcache_entry:fetch(Pid, Opts);
+                {error, _} = Error ->
+                    Error
+            end;
         {error, _} = Error ->
             Error
     end.
@@ -113,23 +141,33 @@ lookup_file(Pid, Opts) when is_pid(Pid) ->
     end;
 lookup_file(Key, Opts) ->
     filezcache_event:lookup(Key),
-    case filezcache_store:lookup(Key) of
-        {ok, Pid} ->
-            try
-                filezcache_entry:fetch_file(Pid, Opts)
-            catch
-                exit:{noproc, _} ->
-                    {error, enoent}
+    case filezcache_entry_manager:lookup(Key) of
+        {ok, Found} ->
+            Found;
+        {error, enoent} ->
+            case filezcache_store:lookup(Key) of
+                {ok, Pid} ->
+                    try
+                        filezcache_entry:fetch_file(Pid, Opts)
+                    catch
+                        exit:{noproc, _} ->
+                            {error, enoent}
+                    end;
+                {error, _} = Error ->
+                    Error
             end;
         {error, _} = Error ->
             Error
     end.
 
--spec delete(term()) -> ok | {error, locked|enoent}.
+-spec delete(term()) -> ok | {error, lockedlog_a}.
 delete(Key) ->
+    ok = filezcache_entry_manager:delete(Key),
     case filezcache_store:lookup(Key) of
         {ok, Pid} ->
             filezcache_entry:delete(Pid);
+        {error, enoent} ->
+            ok;
         {error, _Reason} = Error ->
             Error
     end.
@@ -147,17 +185,17 @@ stats() ->
 
 %%% Support functions
 
-insert_1(Key, What, Opts) ->
-    insert_or_error(filezcache_store:lookup(Key), Key, What, Opts).
+insert_1(Key, DataSource, Opts) ->
+    insert_or_error(filezcache_store:lookup(Key), Key, DataSource, Opts).
 
-insert_or_error({ok, Pid}, _Key, _What, _Opts) ->
+insert_or_error({ok, Pid}, _Key, _DataSource, _Opts) ->
     {error, {already_started, Pid}};
-insert_or_error({error, enoent}, Key, What, Opts) ->
+insert_or_error({error, enoent}, Key, DataSource, Opts) ->
     case filezcache_entry_manager:insert(Key, Opts) of
         {ok, Pid} ->
-            case What of
+            case DataSource of
                 none -> ok;
-                _Data -> ok = filezcache_entry:store(Pid, What)
+                _Data -> ok = filezcache_entry:store(Pid, DataSource)
             end,
             {ok, Pid};
         {error, _} = Error ->

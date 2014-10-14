@@ -96,6 +96,8 @@ handle_info({io_request, From, ReplyAs, Request} = Req, State0) ->
             From ! {io_reply, ReplyAs, Reply},
             {stop, normal, NewState}
     end;
+handle_info({'DOWN', _MRef, process, Object, _Info}, #state{cache_pid=Object, size=Size, final_size=Size} = State) ->
+    {noreply, State#state{cache_pid=undefined}};
 handle_info({'DOWN', _MRef, process, Object, _Info}, #state{cache_pid=Object} = State) ->
     {stop, normal, State};
 handle_info({'DOWN', _MRef, process, Object, _Info}, #state{reader_pid=Object} = State) ->

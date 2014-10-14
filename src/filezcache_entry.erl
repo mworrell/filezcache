@@ -1,5 +1,6 @@
 %% @author Marc Worrell
 %% @copyright 2013-2014 Marc Worrell
+%% @doc Writes a file to the filezcache, streams the file while writing
 
 %% Copyright 2013-2014 Marc Worrell
 %%
@@ -14,12 +15,6 @@
 %% WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
 %% See the License for the specific language governing permissions and
 %% limitations under the License.
-
-
-%% TODO:
-%% - timeout on idle state for invalidation-check and/or hibernate
-%% - timeout on streaming state
-%% - optional: inform readers/waiters of termination
 
 -module(filezcache_entry).
 
@@ -37,6 +32,7 @@
         append_stream/2,
         finish_stream/1,
         delete/1,
+        logged/1,
         gc/1
         ]).
 
@@ -78,8 +74,8 @@
 % Max every 10secs, we check if our file still exists (usec)
 -define(CHECK_PERIOD, 10000000).
 
-% After 2 seconds the idle loop will hibernate this entry
--define(HIBERNATE_TIMEOUT, 2000).
+% After 30 minutes in the idle look we assume something went wrong with logging and will close down.
+-define(IDLE_TIMEOUT, 1800000).
 
 %% API
 
@@ -137,6 +133,9 @@ delete(Pid) ->
             {error, noproc}
     end.
 
+logged(Pid) ->
+    gen_fsm:send_event(Pid, logged).
+
 gc(Pid) ->
     gen_fsm:send_all_state_event(Pid, gc).
 
@@ -175,21 +174,21 @@ wait_for_data({data, Data}, #state{devices=Devices, waiters=Waiters, filename=Fi
                          final_size=Size,
                          devices=[]},
     log_ready(State1),
-    {next_state, idle, demonitor_writer(State1), ?HIBERNATE_TIMEOUT};
+    {next_state, idle, demonitor_writer(State1), ?IDLE_TIMEOUT};
 wait_for_data({file, Filename}, #state{filename=Filename} = State) ->
     State1 = send_file_state(set_file_state(Filename, State)),
     log_ready(State1),
-    {next_state, idle, demonitor_writer(State1), ?HIBERNATE_TIMEOUT};
+    {next_state, idle, demonitor_writer(State1), ?IDLE_TIMEOUT};
 wait_for_data({file, File}, #state{filename=Filename} = State) ->
     {ok, _BytesCopied} = file:copy(File, Filename),
     State1 = send_file_state(set_file_state(Filename, State)),
     log_ready(State1),
-    {next_state, idle, demonitor_writer(State1), ?HIBERNATE_TIMEOUT};
+    {next_state, idle, demonitor_writer(State1), ?IDLE_TIMEOUT};
 wait_for_data({tmpfile, TmpFile}, #state{filename=Filename} = State) ->
     ok = rename(TmpFile, Filename),
     State1 = send_file_state(set_file_state(Filename, State)),
     log_ready(State1),
-    {next_state, idle, demonitor_writer(State1), ?HIBERNATE_TIMEOUT};
+    {next_state, idle, demonitor_writer(State1), ?IDLE_TIMEOUT};
 wait_for_data({stream_fun, Streamer, FinalSize, Fun}, #state{writer_pid=Streamer, filename=Filename} = State) ->
     Self = self(),
     Pid = spawn_link(fun() -> Fun(Self) end),
@@ -222,11 +221,12 @@ wait_for_data({repop, Key, Filename, Size, Checksum}, State) ->
     },
     State2 = send_file_state(State1),
     log_ready(State2),
-    {next_state, idle, demonitor_writer(State2), ?HIBERNATE_TIMEOUT}.
+    {next_state, idle, demonitor_writer(State2), ?IDLE_TIMEOUT}.
 
 wait_for_data({fetch, _Pid, _Opts} = Fetch, From, State) ->
     handle_reply_partial_data(Fetch, From, wait_for_data, State);
-wait_for_data({fetch_file, Pid, Opts}, From, #state{waiters=Waiters} = State) ->
+wait_for_data({fetch_file, Pid, Opts}, From, #state{waiters=Waiters, key=Key} = State) ->
+    filezcache_entry_manager:log_access(Key, Pid),
     {next_state, wait_for_data, opt_locker(State#state{waiters=[From|Waiters]}, Pid, Opts)}.
 
 %% Receive data from a stream
@@ -243,26 +243,31 @@ streaming({stream_finish, Streamer}, #state{writer_pid=Streamer, fd=FD, size=Siz
     send_waiters(Waiters, Size, State#state.filename),
     State1 = State#state{checksum_context=undefined, fd=undefined, final_size=Size, checksum=crypto:hash_final(Ctx), devices=[], waiters=[]},
     log_ready(State1),
-    {next_state, idle, demonitor_writer(State1), ?HIBERNATE_TIMEOUT}.
+    {next_state, idle, demonitor_writer(State1), ?IDLE_TIMEOUT}.
 
 streaming({fetch, _Pid, _Opts} = Fetch, From, State) ->
     handle_reply_partial_data(Fetch, From, streaming, State);
-streaming({fetch_file, Pid, Opts}, From, #state{waiters=Waiters} = State) ->
+streaming({fetch_file, Pid, Opts}, From, #state{waiters=Waiters, key=Key} = State) ->
+    filezcache_entry_manager:log_access(Key, Pid),
     {next_state, streaming, opt_locker(State#state{waiters=[From|Waiters]}, Pid, Opts)}.
 
 %% idle - handle all cache requests
-idle({Fetch, Pid, Opts}, _From, #state{filename=Filename, size=Size} = State) when Fetch =:= fetch; Fetch =:= fetch_file ->
-    filezcache_entry_manager:log_access(self()),
+idle({Fetch, Pid, Opts}, _From, #state{key=Key, filename=Filename, size=Size} = State) when Fetch =:= fetch; Fetch =:= fetch_file ->
+    filezcache_entry_manager:log_access(Key),
     case maybe_check_filename(os:timestamp(), State) of
         {ok, State1} ->
-            {reply, {ok, {file, Size, Filename}}, idle, opt_locker(State1, Pid, Opts), ?HIBERNATE_TIMEOUT};
+            {reply, {ok, {file, Size, Filename}}, idle, opt_locker(State1, Pid, Opts), ?IDLE_TIMEOUT};
         {error, _} = Error ->
             lager:warning("Filezcache file error ~p on ~p", [Error, Filename]),
             {reply, Error, closing, State, 0}
     end.
 
+idle(logged, #state{fd=FD} = State) ->
+    _ = file:close(FD),
+    {stop, normal, State#state{fd=undefined, filename=undefined}};
+
 idle(timeout, State) ->
-    {next_state, idle, State, hibernate}.
+    {next_state, closing, State}.
 
 
 %% Closing down
@@ -350,8 +355,9 @@ maybe_check_filename1(true, Now, State) ->
 
 %% @doc We didn't receive all data yet, reply with a io-device which can be used to read the data.
 handle_reply_partial_data({fetch, Pid, Opts}, _From, StateName, 
-                          #state{size=Size, final_size=FinalSize, filename=Filename, devices=Devices} = State) ->
+                          #state{key=Key, size=Size, final_size=FinalSize, filename=Filename, devices=Devices} = State) ->
     {ok, DevicePid} = filezcache_device_sup:start_child(self(), Filename, Size, FinalSize),
+    filezcache_entry_manager:log_access(Key, DevicePid),
     {reply, {ok, {device, DevicePid}}, StateName, opt_locker(State#state{devices=[DevicePid|Devices]}, Pid, Opts)}.
 
 
