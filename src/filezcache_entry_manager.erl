@@ -28,6 +28,7 @@
         insert/2,
         lookup/1,
         lookup/2,
+        delete/1,
         gc/1,
         stats/0,
         log_access/1,
