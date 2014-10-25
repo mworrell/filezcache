@@ -162,7 +162,7 @@ lookup_file(Key, Opts) ->
 
 -spec delete(term()) -> ok | {error, lockedlog_a}.
 delete(Key) ->
-    ok = filezcache_entry_manager:delete(Key),
+    {ok,_} = filezcache_entry_manager:delete(Key),
     case filezcache_store:lookup(Key) of
         {ok, Pid} ->
             filezcache_entry:delete(Pid);
