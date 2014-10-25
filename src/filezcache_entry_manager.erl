@@ -342,7 +342,7 @@ do_add_key_referrer(Key, Pid, State) ->
     }.
 
 is_referred(Key, State) ->
-    dict:fetch(Key, State#state.key2referrers) =/= error.
+    dict:is_key(Key, State#state.key2referrers).
 
 remove_referrer(_Pid, [], Key2Pids) ->
     Key2Pids;
