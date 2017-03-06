@@ -206,17 +206,17 @@ insert_or_error({error, enoent}, Key, DataSource, Opts) ->
 %% @doc Return the directory for the storage of the cached files
 -spec data_dir() -> file:filename().
 data_dir() ->
-    case application:get_env(data_dir) of
+    case application:get_env(filezcache, data_dir) of
         undefined -> filename:join([priv_dir(), "data"]);
-        DataDir -> DataDir
+        {ok, Dir} -> Dir
     end.
 
 %% @doc Return the directory for the storage of the log/journal files
 -spec journal_dir() -> file:filename().
 journal_dir() ->
-    case application:get_env(journal_dir) of
+    case application:get_env(filezcache, journal_dir) of
         undefined -> filename:join([priv_dir(), "journal"]);
-        DataDir -> DataDir
+        {ok, Dir} -> Dir
     end.
 
 priv_dir() ->
