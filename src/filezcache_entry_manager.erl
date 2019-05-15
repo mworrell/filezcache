@@ -134,8 +134,6 @@ log_ready(EntryPid, Key, Filename, Size, Checksum) ->
 %% gen_server callbacks
 
 init([]) ->
-    {A1,A2,A3} = os:timestamp(),
-    random:seed(A1, A2, A3),
     filezcache_store:init(),
     gen_server:cast(self(), log_init),
     timer:send_after(?GC_INTERVAL, gc),
@@ -527,12 +525,12 @@ fill_pool_1(Pool, [#filezcache_log_entry{key=Key, filename=Filename}|Cs], Method
 do_select(eager) ->
     true;
 do_select(normal) ->
-    random:uniform(?GC_CHANCE_1_IN_N) =:= 1.
+    rand_uniform(?GC_CHANCE_1_IN_N) =:= 1.
 
 random_evict([]) -> 
     [];
 random_evict(Pool) ->
-    Key = lists:nth(random:uniform(length(Pool)), Pool),
+    Key = lists:nth(rand_uniform(length(Pool)), Pool),
     gc(Key),
     lists:delete(Key, Pool).
 
@@ -560,3 +558,12 @@ get_slot(SlotNr) ->
     catch
         error:badarg -> '$end_of_table'
     end.
+
+-spec rand_uniform( pos_integer() ) -> pos_integer().
+-ifdef(rand_only).
+rand_uniform(N) ->
+    rand:uniform(N).
+-else.
+rand_uniform(N) ->
+    crypto:rand_uniform(1,N+1).
+-endif.

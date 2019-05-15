@@ -1,7 +1,7 @@
 %% -*- mode: erlang -*-
 {application, filezcache,
  [{description, "FilezCache"},
-  {vsn, "0.1.0"},
+  {vsn, "1.0.0"},
   {modules,
    []},
   {registered, [
@@ -15,4 +15,8 @@
         % {data_dir, "..."}
         {max_bytes, 10737418240}     % 10GB
   ]},
-  {applications, [kernel, stdlib, crypto]}]}.
+  {applications, [kernel, stdlib, crypto]},
+  {maintainers, ["Zotonic Team"]},
+  {licenses, ["Apache License v2"]},
+  {links, [{"GitHub", "https://github.com/mworrell/filezcache"}]}
+]}.

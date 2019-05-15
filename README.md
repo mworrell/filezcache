@@ -1,14 +1,15 @@
-Filezcache - webzmachine companion
-=================================
+Filezcache - cache s3 and other files on disk
+=============================================
 
-This is a file caching system optimized for use with webzmachine.
+This is a file caching system optimized for use with cowmachine
+but then also be used with other services.
 
 It has some unique properties:
 
- * Lookups return data formats directly useable for webzmachine serving
  * Lookups return file references (if possible) which can be used with sendfile
- * Cached files can be streamed to (webzmachine) requestors while they are being filled
+ * Cached files can be streamed to requestors while they are being filled
  * On startup the cache is repopulated with existing files
+ * Lookups return data formats directly useable for cowmachine serving
 
 The system uses the file system to store files and a disk log. The files are stored
 in `priv/data/` and the disk log in `priv/journal`.
