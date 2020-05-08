@@ -102,8 +102,8 @@ fetch_file(Pid, Opts) ->
              {stream_start, pid(), integer()|undefined}
             |{stream_fun, pid(), function(), integer()|undefined}
             |{data, binary()}
-            |{file, file:filename()}
-            |{tmpfile, file:filename()}) -> ok.
+            |{file, file:filename_all()}
+            |{tmpfile, file:filename_all()}) -> ok.
 store(Pid, Value) ->
     gen_fsm:send_event(Pid, Value).
 
