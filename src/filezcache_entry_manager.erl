@@ -216,12 +216,8 @@ handle_cast({gc, Key}, State) ->
                 true ->
                     {noreply, State};
                 false ->
-                    case delete(Key) of
-                        {ok, Size} ->
-                            {noreply, State#state{bytes=State#state.bytes - Size}};
-                        {error, _} ->
-                            {noreply, State}
-                    end
+                    {ok, Size} = delete(Key),
+                    {noreply, State#state{bytes=State#state.bytes - Size}}
             end
     end;
 
@@ -560,10 +556,5 @@ get_slot(SlotNr) ->
     end.
 
 -spec rand_uniform( pos_integer() ) -> pos_integer().
--ifdef(rand_only).
 rand_uniform(N) ->
     rand:uniform(N).
--else.
-rand_uniform(N) ->
-    crypto:rand_uniform(1,N+1).
--endif.

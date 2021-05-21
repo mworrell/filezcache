@@ -123,9 +123,7 @@ lookup(Key, Opts) ->
                     filezcache_entry:fetch(Pid, Opts);
                 {error, _} = Error ->
                     Error
-            end;
-        {error, _} = Error ->
-            Error
+            end
     end.
 
 -spec lookup_file(term()) -> {ok, {file, integer(), string()}} | {error, term()}.
@@ -155,9 +153,7 @@ lookup_file(Key, Opts) ->
                     end;
                 {error, _} = Error ->
                     Error
-            end;
-        {error, _} = Error ->
-            Error
+            end
     end.
 
 -spec delete(term()) -> ok | {error, lockedlog_a}.
@@ -167,9 +163,7 @@ delete(Key) ->
         {ok, Pid} ->
             filezcache_entry:delete(Pid);
         {error, enoent} ->
-            ok;
-        {error, _Reason} = Error ->
-            Error
+            ok
     end.
 
 -spec where(term()) -> pid() | undefined.
