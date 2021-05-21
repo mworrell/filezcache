@@ -15,7 +15,7 @@
         % {data_dir, "..."}
         {max_bytes, 10737418240}     % 10GB
   ]},
-  {applications, [kernel, stdlib, crypto]},
+  {applications, [kernel, stdlib, crypto, logger]},
   {maintainers, ["Zotonic Team"]},
   {licenses, ["Apache License v2"]},
   {links, [{"GitHub", "https://github.com/mworrell/filezcache"}]}

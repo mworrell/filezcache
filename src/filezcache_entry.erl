@@ -267,7 +267,7 @@ idle({call, From}, {Fetch, Pid, Opts}, #state{key=Key, filename=Filename, size=S
             gen_statem:reply(From, {ok, {file, Size, Filename}}),
             {next_state, idle, opt_locker(State1, Pid, Opts), ?IDLE_TIMEOUT};
         {error, _} = Error ->
-            lager:warning("Filezcache file error ~p on ~p", [Error, Filename]),
+            logger:warning("Filezcache file error ~p on ~p", [Error, Filename]),
             gen_statem:reply(From, Error),
             {next_state, closing, State, 0}
     end;
