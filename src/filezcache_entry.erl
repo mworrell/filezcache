@@ -1,8 +1,8 @@
 %% @author Marc Worrell
-%% @copyright 2013-2014 Marc Worrell
+%% @copyright 2013-2022 Marc Worrell
 %% @doc Writes a file to the filezcache, streams the file while writing
 
-%% Copyright 2013-2014 Marc Worrell
+%% Copyright 2013-2022 Marc Worrell
 %%
 %% Licensed under the Apache License, Version 2.0 (the "License");
 %% you may not use this file except in compliance with the License.
@@ -18,7 +18,7 @@
 
 -module(filezcache_entry).
 
--include_lib("kernel/include/file.hrl").
+-include_lib("kernel/include/logger.hrl").
 
 -behaviour(gen_fsm).
 
@@ -258,7 +258,7 @@ idle({Fetch, Pid, Opts}, _From, #state{key=Key, filename=Filename, size=Size} = 
         {ok, State1} ->
             {reply, {ok, {file, Size, Filename}}, idle, opt_locker(State1, Pid, Opts), ?IDLE_TIMEOUT};
         {error, _} = Error ->
-            lager:warning("Filezcache file error ~p on ~p", [Error, Filename]),
+            ?LOG_WARNING("Filezcache file error ~p on ~p", [Error, Filename]),
             {reply, Error, closing, State, 0}
     end.
 
