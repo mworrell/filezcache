@@ -41,6 +41,8 @@ test: $(REBAR)
 edoc: $(REBAR)
 	$(REBAR) edoc
 
+edoc_private: $(REBAR)
+	$(REBAR) as doc_private edoc
 
 # Cleaning
 .PHONY: clean_logs
@@ -53,6 +55,12 @@ clean_logs:
 clean: clean_logs $(REBAR)
 	@echo "cleaning ebin:"
 	$(REBAR) $(REBAR_OPTS) clean
+	clean_doc
+
+clean_doc:
+	@rm -f doc/*.html
+	@rm -f doc/erlang.png
+	@rm -f doc/edoc-info	
 
 .PHONY: dist-clean
 dist-clean: clean

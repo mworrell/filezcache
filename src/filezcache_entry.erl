@@ -1,3 +1,4 @@
+%% @private
 %% @author Marc Worrell
 %% @copyright 2013-2021 Marc Worrell
 %% @doc Writes a file to the filezcache, streams the file while writing
