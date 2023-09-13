@@ -151,9 +151,9 @@ init([Key, WriterPid, Opts]) ->
                     size = 0,
                     final_size = undefined,
                     checksum = 0,
-                    checksum_context = undefined, 
+                    checksum_context = undefined,
                     writer_pid = WriterPid,
-                    writer_mon = erlang:monitor(process, WriterPid), 
+                    writer_mon = erlang:monitor(process, WriterPid),
                     devices = [],
                     waiters = [],
                     last_access = Now,
@@ -176,7 +176,7 @@ wait_for_data(cast, {data, Data}, #state{devices=Devices, waiters=Waiters, filen
     ok = file:write_file(Filename, Data),
     send_devices(Devices, {final, Size}),
     send_waiters(Waiters, Size, Filename),
-    State1 = State#state{checksum=crypto:hash(sha, Data), 
+    State1 = State#state{checksum=crypto:hash(sha, Data),
                          size=Size,
                          final_size=Size,
                          devices=[]},
@@ -352,7 +352,7 @@ handle_event(info, _Info, StateName, State) ->
 demonitor_writer(#state{writer_mon=undefined} = State) ->
     State;
 demonitor_writer(#state{writer_mon=MRef} = State) ->
-    erlang:demonitor(MRef), 
+    erlang:demonitor(MRef),
     State#state{
         writer_pid=undefined,
         writer_mon=undefined
@@ -374,11 +374,12 @@ maybe_check_filename1(true, Now, State) ->
 
 
 %% @doc We didn't receive all data yet, reply with a io-device which can be used to read the data.
-handle_reply_partial_data({fetch, Pid, Opts}, _From, StateName, 
+handle_reply_partial_data({fetch, Pid, Opts}, From, StateName,
                           #state{key=Key, size=Size, final_size=FinalSize, filename=Filename, devices=Devices} = State) ->
     {ok, DevicePid} = filezcache_device_sup:start_child(self(), Filename, Size, FinalSize),
     filezcache_entry_manager:log_access(Key, DevicePid),
-    {reply, {ok, {device, DevicePid}}, StateName, opt_locker(State#state{devices=[DevicePid|Devices]}, Pid, Opts)}.
+    gen_statem:reply(From, {ok, {device, DevicePid}}),
+    {next_state, StateName, opt_locker(State#state{devices=[DevicePid|Devices]}, Pid, Opts)}.
 
 
 log_ready(#state{key=Key, filename=Filename, final_size=FinalSize, checksum=Checksum}) ->
@@ -399,7 +400,7 @@ filename(Key) ->
     [ A1,A2,B1,B2 | HashS ] = encode(crypto:hash(sha256, term_to_binary(Key)), 36),
     Filename = filename:join([filezcache:data_dir(), [A1,A2], [B1,B2], HashS]),
     ok = filelib:ensure_dir(Filename),
-    Filename. 
+    Filename.
 
 encode(Data, Base) when is_binary(Data) ->
     encode(binary_to_list(Data), Base);
@@ -416,7 +417,7 @@ encode(Data, Base) when is_list(Data) ->
 send_devices([], _Msg) ->
     ok;
 send_devices(Pids, Msg) ->
-    lists:map(fun(Pid) -> 
+    lists:map(fun(Pid) ->
                   gen_server:cast(Pid, Msg)
               end,
               Pids).
@@ -448,6 +449,6 @@ rename(TmpFile, Filename) ->
         {error, exdev} ->
             {ok, _BytesCopied} = file:copy(TmpFile, Filename),
             ok = file:delete(TmpFile);
-        ok -> 
+        ok ->
             ok
     end.

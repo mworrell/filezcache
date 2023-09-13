@@ -28,7 +28,8 @@ all() ->
         cache_binary_test,
         cache_delete_test,
         cache_tmpfile_test,
-        cache_file_test
+        cache_file_test,
+        cache_stream_test
     ].
 
 %%--------------------------------------------------------------------
@@ -88,6 +89,25 @@ cache_file_test(_Config) ->
     {error, enoent} = filezcache:lookup(testfile),
     ok.
 
+cache_stream_test(_Config) ->
+    {ok, WriterPid} = filezcache:insert_stream(stream, 20, []),
+    true = is_pid(WriterPid),
+    {ok, {device, IO}} = filezcache:lookup(stream),
+    true = is_pid(IO),
+    ok = filezcache:append_stream(WriterPid, <<"12345">>),
+    {ok, <<"1234">>} = file:read(IO, 4),
+    ok = filezcache:append_stream(WriterPid, <<"67890">>),
+    {ok, <<"567890">>} = file:read(IO, 6),
+    ok = filezcache:append_stream(WriterPid, <<"0987654321">>),
+    true = erlang:is_process_alive(WriterPid),
+    ok = filezcache:finish_stream(WriterPid),
+    {ok, <<"0987654321">>} = file:read(IO, 10),
+    {error, eof} = file:read(IO, 1),
+    true = erlang:is_process_alive(IO),
+    ok = file:close(IO),
+    false = erlang:is_process_alive(IO),
+    false = erlang:is_process_alive(WriterPid),
+    ok.
 
 %%--------------------------------------------------------------------
 %% SUPPORT FUNCTIONS

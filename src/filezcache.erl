@@ -210,7 +210,10 @@ locate_monitor(Key) ->
 access(Key) ->
     filezcache_entry_manager:log_access(Key).
 
-%% @doc Lookup datastore element by Key.
+%% @doc Lookup datastore element by Key. Either returns the file in the filecache
+%% or a device pid to read from. The file is returned if the cache entry is complete, the
+%% device is returned if the cache entry is being written to. Read the device using
+%% file:read(Pid, Length).
 
 -spec lookup(Key) -> Result when
 	Key :: term(),
@@ -219,7 +222,7 @@ access(Key) ->
             | {error, term()},
     FileSize :: non_neg_integer(),
     Filename :: file:filename_all(),
-    Pid :: pid().
+    Pid :: file:io_device().
 lookup(Key) ->
     lookup(Key, []).
 

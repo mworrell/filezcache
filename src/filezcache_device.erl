@@ -193,7 +193,7 @@ get_chars(N, State) ->
         ok ->
             do_get_chars(N, ensure_fd(State));
         eof ->
-            {ok, eof, State};
+            {ok, {error, eof}, State};
         wait ->
             {wait, State}
     end.
