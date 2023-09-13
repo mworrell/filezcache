@@ -18,8 +18,8 @@
 -module(filezcache).
 
 -export([
-    insert/2, 
-    insert/3, 
+    insert/2,
+    insert/3,
     insert_file/2,
     insert_file/3,
     insert_tmpfile/2,
@@ -32,10 +32,10 @@
     finish_stream/1,
     locate_monitor/1,
     access/1,
-    lookup/1, 
-    lookup_file/1, 
-    lookup/2, 
-    lookup_file/2, 
+    lookup/1,
+    lookup_file/1,
+    lookup/2,
+    lookup_file/2,
     delete/1,
     where/1,
 
@@ -55,8 +55,8 @@
 %% @equiv insert(Key, Bin, [])
 
 -spec insert(Key, Bin) -> Result when
-	Key :: term(), 
-	Bin :: binary(), 
+	Key :: term(),
+	Bin :: binary(),
 	Result :: {ok, Pid} | {error, Reason},
 	Pid :: pid(),
 	Reason :: term().
@@ -66,8 +66,8 @@ insert(Key, Bin) ->
 %% @doc Insert binary value and options.
 
 -spec insert(Key, Bin, Opts) -> Result when
-	Key :: term(), 
-	Bin :: binary(), 
+	Key :: term(),
+	Bin :: binary(),
 	Opts :: list(),
 	Result :: {ok, Pid} | {error, Reason},
 	Pid :: pid(),
@@ -81,7 +81,9 @@ insert(Key, Bin, Opts) when is_binary(Bin) ->
 -spec insert_file(Key, FilePath) -> Result when
 	Key :: term(),
 	FilePath :: file:name_all() | iodata(),
-	Result :: ok.
+	Result :: {ok, Pid} | {error, Reason},
+    Pid :: pid(),
+    Reason :: term().
 insert_file(Key, FilePath) ->
     insert_file(Key, FilePath, []).
 
@@ -91,7 +93,9 @@ insert_file(Key, FilePath) ->
 	Key :: term(),
 	FilePath :: file:name_all() | iodata(),
 	Opts :: list(),
-	Result :: ok.
+	Result :: {ok, Pid} | {error, Reason},
+    Pid :: pid(),
+    Reason :: term().
 insert_file(Key, FilePath, Opts) ->
     insert_1(Key, {file, FilePath}, Opts).
 
@@ -101,7 +105,9 @@ insert_file(Key, FilePath, Opts) ->
 -spec insert_tmpfile(Key, FilePath) -> Result when
 	Key :: term(),
 	FilePath :: file:name_all() | iodata(),
-	Result :: ok.
+	Result :: {ok, Pid} | {error, Reason},
+    Pid :: pid(),
+    Reason :: term().
 insert_tmpfile(Key, FilePath) ->
     insert_tmpfile(Key, FilePath, []).
 
@@ -111,7 +117,9 @@ insert_tmpfile(Key, FilePath) ->
 	Key :: term(),
 	FilePath :: file:name_all() | iodata(),
 	Opts :: list(),
-	Result :: ok.
+	Result :: {ok, Pid} | {error, Reason},
+    Pid :: pid(),
+    Reason :: term().
 insert_tmpfile(Key, FilePath, Opts) ->
     insert_1(Key, {tmpfile, FilePath}, Opts).
 
@@ -122,7 +130,7 @@ insert_wait(Key) ->
 %% @equiv insert_stream(Key, undefined, [])
 
 -spec insert_stream(Key) -> Result when
-	Key :: term(), 
+	Key :: term(),
 	Result :: {ok, Pid} | {error, Reason},
 	Pid :: pid(),
 	Reason :: term().
@@ -132,8 +140,8 @@ insert_stream(Key) ->
 %% @doc Insert stream.
 
 -spec insert_stream(Key, FinalSize, Opts) -> Result when
-	Key :: term(), 
-	FinalSize :: non_neg_integer(), 
+	Key :: term(),
+	FinalSize :: non_neg_integer() | undefined,
 	Opts :: list(),
 	Result :: {ok, Pid} | {error, Reason},
 	Pid :: pid(),
@@ -144,9 +152,9 @@ insert_stream(Key, FinalSize, Opts) ->
 %% @doc Insert stream.
 
 -spec insert_stream(Key, FinalSize, StreamFun, Opts) -> Result when
-	Key :: term(), 
-	FinalSize :: non_neg_integer(), 
-	StreamFun :: function(), 
+	Key :: term(),
+	FinalSize :: non_neg_integer() | undefined,
+    StreamFun :: function(),
 	Opts :: list(),
 	Result :: {ok, Pid} | {error, Reason},
 	Pid :: pid(),
@@ -196,7 +204,7 @@ locate_monitor(Key) ->
 	Key :: term(),
 	Result :: ok.
 access(Key) ->
-    filezcache_entry_manager:log_access(Key). 
+    filezcache_entry_manager:log_access(Key).
 
 %% @doc Lookup datastore element by Key.
 
@@ -208,12 +216,8 @@ lookup(Key) ->
 
 %% @doc Lookup datastore element by Pid or Key and options.
 
--spec lookup(Pid, Opts) -> Result when
-	Pid :: pid(),  
-	Opts :: list(),
-	Result :: term();
-(Key, Opts) -> Result when
-	Key :: term(), 
+-spec lookup(PidOrKey, Opts) -> Result when
+	PidOrKey :: pid() | term(),
 	Opts :: list(),
 	Result :: term().
 lookup(Pid, Opts) when is_pid(Pid) ->
@@ -242,12 +246,8 @@ lookup_file(Key) ->
 
 %% @doc Lookup Pid and options.
 
--spec lookup_file(Pid, Opts) -> Result when
-	Pid :: pid(),
-	Opts :: list(),
-	Result :: term() | {error, enoent};
-(Key, Opts) -> Result when	
-	Key :: term(),
+-spec lookup_file(PidOrKey, Opts) -> Result when
+	PidOrKey :: pid() | term(),
 	Opts :: list(),
 	Result :: term() | {error, enoent}.
 lookup_file(Pid, Opts) when is_pid(Pid) ->
