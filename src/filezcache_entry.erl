@@ -1,9 +1,9 @@
 %% @private
 %% @author Marc Worrell
-%% @copyright 2013-2021 Marc Worrell
+%% @copyright 2013-2022 Marc Worrell
 %% @doc Writes a file to the filezcache, streams the file while writing
 
-%% Copyright 2013-2021 Marc Worrell
+%% Copyright 2013-2022 Marc Worrell
 %%
 %% Licensed under the Apache License, Version 2.0 (the "License");
 %% you may not use this file except in compliance with the License.
@@ -19,7 +19,7 @@
 
 -module(filezcache_entry).
 
--include_lib("kernel/include/file.hrl").
+-include_lib("kernel/include/logger.hrl").
 
 -behaviour(gen_statem).
 
@@ -268,11 +268,11 @@ idle({call, From}, {Fetch, Pid, Opts}, #state{key=Key, filename=Filename, size=S
             gen_statem:reply(From, {ok, {file, Size, Filename}}),
             {next_state, idle, opt_locker(State1, Pid, Opts), ?IDLE_TIMEOUT};
         {error, _} = Error ->
-            logger:warning("Filezcache file error ~p on ~p", [Error, Filename]),
-            gen_statem:reply(From, Error),
-            {next_state, closing, State, 0}
-    end;
-idle(cast, logged, #state{fd=FD} = State) ->
+            ?LOG_WARNING("Filezcache file error ~p on ~p", [Error, Filename]),
+            {reply, Error, closing, State, 0}
+    end.
+
+idle(logged, #state{fd=FD} = State) ->
     _ = file:close(FD),
     {stop, normal, State#state{fd=undefined, filename=undefined}};
 idle(cast, timeout, State) ->
