@@ -270,15 +270,15 @@ idle({call, From}, {Fetch, Pid, Opts}, #state{key=Key, filename=Filename, size=S
         {error, _} = Error ->
             ?LOG_WARNING("Filezcache file error ~p on ~p", [Error, Filename]),
             {reply, Error, closing, State, 0}
-    end.
-
-idle(logged, #state{fd=FD} = State) ->
+    end;
+idle(cast, logged, #state{fd=FD} = State) ->
     _ = file:close(FD),
     {stop, normal, State#state{fd=undefined, filename=undefined}};
 idle(cast, timeout, State) ->
     {next_state, closing, State};
 idle(EventType, EventContent, State) ->
     handle_event(EventType, EventContent, idle, State).
+
 
 %% Closing down
 closing(cast, timeout, #state{fd=FD, filename=Filename} = State) when FD =/= undefined ->
