@@ -2,8 +2,7 @@
 {application, filezcache,
  [{description, "FilezCache"},
   {vsn, "git"},
-  {modules,
-   []},
+  {modules, []},
   {registered, [
         filezcache_sup,
         filezcache_entry_manager,
@@ -17,6 +16,6 @@
   ]},
   {applications, [kernel, stdlib, crypto, mnesia]},
   {maintainers, ["Zotonic Team"]},
-  {licenses, ["Apache License v2"]},
+  {licenses, ["Apache-2.0"]},
   {links, [{"GitHub", "https://github.com/mworrell/filezcache"}]}
 ]}.
