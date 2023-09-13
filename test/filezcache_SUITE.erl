@@ -107,6 +107,9 @@ cache_stream_test(_Config) ->
     ok = file:close(IO),
     false = erlang:is_process_alive(IO),
     false = erlang:is_process_alive(WriterPid),
+    % Now the entry should be available as a file
+    {ok, {file, 20, File}} = filezcache:lookup(stream),
+    {ok, <<"12345678900987654321">>} = file:read_file(File),
     ok.
 
 %%--------------------------------------------------------------------
