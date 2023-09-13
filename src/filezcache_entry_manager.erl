@@ -170,14 +170,14 @@ handle_call({insert, Key, WriterPid, Opts}, _From, State) ->
             {reply, {ok, Pid}, State2}
     end;
 handle_call(stats, _From, State) ->
-    Stats = [
-        {bytes, State#state.bytes},
-        {max_bytes, max_bytes()},
-        {processes, gb_trees:size(State#state.monitors)},
-        {entries, mnesia:table_info(filezcache_log_entry, size)},
-        {referrers, dict:size(State#state.referrer2keys)},
-        {gc_candidate_pool, State#state.gc_candidate_pool}
-    ],
+    Stats = #{
+        bytes => State#state.bytes,
+        max_bytes => max_bytes(),
+        processes => gb_trees:size(State#state.monitors),
+        entries => mnesia:table_info(filezcache_log_entry, size),
+        referrers => dict:size(State#state.referrer2keys),
+        gc_candidate_pool => State#state.gc_candidate_pool
+    },
     {reply, Stats, State}.
 
 handle_cast({repop, Key, Filename, undefined, _Checksum}, State) ->

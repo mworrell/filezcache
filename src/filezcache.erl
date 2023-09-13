@@ -318,8 +318,15 @@ where(Key) ->
 
 %% @doc Return data storade information.
 
--spec stats() -> Result when
-	Result :: [tuple()].
+-spec stats() -> Stats when
+	Stats :: #{
+                bytes := non_neg_integer(),
+                max_bytes := non_neg_integer(),
+                processes := non_neg_integer(),
+                entries := non_neg_integer(),
+                referrers := non_neg_integer(),
+                gc_candidate_pool := list()
+            }.
 stats() ->
     filezcache_entry_manager:stats().
 

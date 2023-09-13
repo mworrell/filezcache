@@ -29,7 +29,8 @@ all() ->
         cache_delete_test,
         cache_tmpfile_test,
         cache_file_test,
-        cache_stream_test
+        cache_stream_test,
+        eviction_test
     ].
 
 %%--------------------------------------------------------------------
@@ -111,6 +112,24 @@ cache_stream_test(_Config) ->
     {ok, {file, 20, File}} = filezcache:lookup(stream),
     {ok, <<"12345678900987654321">>} = file:read_file(File),
     ok.
+
+eviction_test(_Config) ->
+    Data = <<"0123456789987654310">>,
+    application:set_env(filezcache, max_bytes, 1000),
+    % Insert 1000 entries of 20 bytes each
+    lists:foreach(
+        fun(K) ->
+            filezcache:insert(K, Data)
+        end,
+        lists:seq(1,1000)),
+    Stats0 = filezcache:stats(),
+    timer:sleep(2000),
+    Stats1 = filezcache:stats(),
+    % Eviction should have started now.
+    #{ bytes := Size0 } = Stats0,
+    #{ bytes := Size1 } = Stats1,
+    Size1 < Size0.
+
 
 %%--------------------------------------------------------------------
 %% SUPPORT FUNCTIONS
