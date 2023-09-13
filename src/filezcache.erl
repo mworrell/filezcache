@@ -80,7 +80,7 @@ insert(Key, Bin, Opts) when is_binary(Bin) ->
 
 -spec insert_file(Key, FilePath) -> Result when
 	Key :: term(),
-	FilePath :: file:name_all() | iodata(),
+	FilePath :: file:filename_all(),
 	Result :: {ok, Pid} | {error, Reason},
     Pid :: pid(),
     Reason :: term().
@@ -91,7 +91,7 @@ insert_file(Key, FilePath) ->
 
 -spec insert_file(Key, FilePath, Opts) -> Result when
 	Key :: term(),
-	FilePath :: file:name_all() | iodata(),
+	FilePath :: file:filename_all(),
 	Opts :: list(),
 	Result :: {ok, Pid} | {error, Reason},
     Pid :: pid(),
@@ -104,7 +104,7 @@ insert_file(Key, FilePath, Opts) ->
 
 -spec insert_tmpfile(Key, FilePath) -> Result when
 	Key :: term(),
-	FilePath :: file:name_all() | iodata(),
+	FilePath :: file:filename_all(),
 	Result :: {ok, Pid} | {error, Reason},
     Pid :: pid(),
     Reason :: term().
@@ -115,7 +115,7 @@ insert_tmpfile(Key, FilePath) ->
 
 -spec insert_tmpfile(Key, FilePath, Opts) -> Result when
 	Key :: term(),
-	FilePath :: file:name_all() | iodata(),
+	FilePath :: file:filename_all(),
 	Opts :: list(),
 	Result :: {ok, Pid} | {error, Reason},
     Pid :: pid(),
@@ -183,7 +183,11 @@ finish_stream(Pid) ->
 
 -spec locate_monitor(Key) -> Result when
 	Key :: term(),
-	Result :: {ok, {file, integer(), string()}} | {ok, {pid, pid()}} | {error, term()}.
+	Result :: {ok, {file, FileSize, Filename}}
+            | {ok, {pid, pid()}}
+            | {error, term()},
+    FileSize :: non_neg_integer(),
+    Filename :: file:filename().
 locate_monitor(Key) ->
     case filezcache_entry_manager:lookup(Key, self()) of
         {ok, _Found} = OK ->
@@ -210,7 +214,12 @@ access(Key) ->
 
 -spec lookup(Key) -> Result when
 	Key :: term(),
-	Result :: {ok, {file, integer(), string()}} | {ok, {device, pid()}} | {error, term()}.
+	Result :: {ok, {file, FileSize, Filename}}
+            | {ok, {device, Pid}}
+            | {error, term()},
+    FileSize :: non_neg_integer(),
+    Filename :: file:filename_all(),
+    Pid :: pid().
 lookup(Key) ->
     lookup(Key, []).
 
@@ -240,7 +249,9 @@ lookup(Key, Opts) ->
 
 -spec lookup_file(Key) -> Result when
 	Key :: term(),
-	Result :: {ok, {file, integer(), string()}} | {error, term()}.
+	Result :: {ok, {file, FileSize, Filename}} | {error, term()},
+    FileSize :: non_neg_integer(),
+    Filename :: file:filename_all().
 lookup_file(Key) ->
     lookup_file(Key, []).
 

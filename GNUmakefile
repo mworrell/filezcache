@@ -36,7 +36,7 @@ xref: $(REBAR)
 	$(REBAR) xref
 
 test: $(REBAR)
-	$(REBAR) $(REBAR_OPTS) ct    
+	$(REBAR) $(REBAR_OPTS) ct
 
 edoc: $(REBAR)
 	$(REBAR) edoc
@@ -60,7 +60,7 @@ clean: clean_logs $(REBAR)
 clean_doc:
 	@rm -f doc/*.html
 	@rm -f doc/erlang.png
-	@rm -f doc/edoc-info	
+	@rm -f doc/edoc-info
 
 .PHONY: dist-clean
 dist-clean: clean
