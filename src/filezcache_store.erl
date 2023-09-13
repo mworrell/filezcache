@@ -1,3 +1,4 @@
+%% @private
 %% @author Marc Worrell
 %% @copyright 2013-2014 Marc Worrell
 %% @doc Manages the mapping between filezache_entry processes and their keys.

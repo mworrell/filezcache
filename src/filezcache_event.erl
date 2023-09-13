@@ -1,3 +1,4 @@
+%% @private
 %% @author Marc Worrell
 %% @copyright 2013-2014 Marc Worrell
 

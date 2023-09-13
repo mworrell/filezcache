@@ -1,3 +1,11 @@
+[![Build Status][gh badge]][gh]
+[![Hex.pm version][hexpm version]][hexpm]
+[![Hex.pm Downloads][hexpm downloads]][hexpm]
+[![Hex.pm Documentation][hexdocs documentation]][hexdocs]
+[![Erlang Versions][erlang version badge]][gh]
+[![License][license]](https://www.apache.org/licenses/LICENSE-2.0)
+
+
 Filezcache - cache s3 and other files on disk
 =============================================
 
@@ -54,3 +62,14 @@ There are some known issues that need to be resolved:
  * On startup delete files that are unknown to the disk log
  * Add timeouts to `filezcache_entry` states `wait_for_data` and `streaming`
  * Extra intelligence in filezcache_entry to prevent evicting active entries during garbage collection
+
+<!-- Badges -->
+[hexpm]: https://hex.pm/packages/filezcache
+[hexpm version]: https://img.shields.io/hexpm/v/filezcache.svg?style=flat-curcle "Hex version"
+[hexpm downloads]: https://img.shields.io/hexpm/dt/filezcache.svg?style=flat-curcle
+[hexdocs documentation]: https://img.shields.io/badge/hex-docs-purple.svg?style=flat-curcle
+[hexdocs]: https://hexdocs.pm/filezcache
+[gh]: https://github.com/mworrell/filezcache/actions/workflows/test.yaml
+[gh badge]: https://img.shields.io/github/workflow/status/mworrell/filezcache/Test?style=flat-curcle
+[erlang version badge]: https://img.shields.io/badge/Supported%20Erlang%2FOTP-22.3%20to%2024.0.1-blue.svg?style=flat-curcle
+[license]: https://img.shields.io/badge/License-Apache_2.0-blue.svg?logo=apache&logoColor=red "Apache 2.0"

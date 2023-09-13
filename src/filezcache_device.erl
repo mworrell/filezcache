@@ -1,3 +1,4 @@
+%% @private
 %% @author Marc Worrell
 %% @copyright 2014 Marc Worrell
 
@@ -114,7 +115,7 @@ terminate(_Reason, _State) ->
     ok.
 
 code_change(_OldVsn, State, _Extra) ->
-    {noreply, State}.
+    {ok, State}.
 
 %%% --------------------------------------------------------------------------------
 %%% Internal functions
@@ -192,7 +193,7 @@ get_chars(N, State) ->
         ok ->
             do_get_chars(N, ensure_fd(State));
         eof ->
-            {ok, eof, State};
+            {ok, {error, eof}, State};
         wait ->
             {wait, State}
     end.
