@@ -49,15 +49,15 @@ iterate(start) ->
     end;
 iterate(SlotNr) ->
     case get_slot(SlotNr) of
-        '$end_of_table' -> 
+        '$end_of_table' ->
             {[], start};
-        Entries -> 
+        Entries ->
             Pids = [ Pid || {_,Pid} <- Entries ],
             {Pids, SlotNr+1}
     end.
 
 get_slot(SlotNr) ->
-    try 
+    try
         ets:slot(?TABLE_ID, SlotNr)
     catch
         error:badarg -> '$end_of_table'
