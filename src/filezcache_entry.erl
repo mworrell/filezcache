@@ -1,9 +1,11 @@
 %% @private
 %% @author Marc Worrell
-%% @copyright 2013-2022 Marc Worrell
-%% @doc Writes a file to the filezcache, streams the file while writing
+%% @copyright 2013-2024 Marc Worrell
+%% @doc Writes a file to the filezcache, streams the file while writing.
+%% Manages a single file in the cache.
+%% @end
 
-%% Copyright 2013-2022 Marc Worrell
+%% Copyright 2013-2024 Marc Worrell
 %%
 %% Licensed under the Apache License, Version 2.0 (the "License");
 %% you may not use this file except in compliance with the License.

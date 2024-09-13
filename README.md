@@ -22,28 +22,29 @@ It has some unique properties:
 The system uses the file system to store files and a disk log. The files are stored
 in `priv/data/` and the disk log in `priv/journal`.
 
-The disk log is used to rebuild the cache after a start. All files are checked against
-the checksum from the disk log, non-matching files are deleted from the cache.
+The disk log is used to rebuild the cache after a start. Files present on disk but
+not mentioned in the disk log are deleted.
 
 Example
 -------
 
-    $ erl -pa ebin
-    Erlang R15B03 (erts-5.9.3.1) [source] [64-bit] [smp:4:4] [async-threads:0] [kernel-poll:false]
-    Eshell V5.9.3.1  (abort with ^G)
-    1> application:start(crypto).
+    $ ./rebar3 shell
+    ===> Verifying dependencies...
+    ===> Analyzing applications...
+    ===> Compiling filezcache
+    Erlang/OTP 26 [erts-14.2.1] [source] [64-bit] [smp:10:10] [ds:10:10:10] [async-threads:1] [jit]
+    Eshell V14.2.1 (press Ctrl+G to abort, type help(). for help)
+    1> application:ensure_all_started(filezcache).
     ok
-    2> application:start(filezcache).
-    ok
-    3> filezcache:lookup(mykey).
+    2> filezcache:lookup(mykey).
     {error, enoent}
-    4> filezcache:insert(mykey, <<"foobar">>).
+    3> filezcache:insert(mykey, <<"foobar">>).
     {ok,<0.173.0>}.
-    5> filezcache:lookup(mykey).
+    4> filezcache:lookup(mykey).
     {ok,{file,6,"priv/data/4J0I2F06043V5P0V603D4O4I6L1J5M1B4I5Y2B2C606W28131H164Z421M4X6221"}}
-    6> filezcache:insert(mykey, <<>>).
+    5> filezcache:insert(mykey, <<>>).
     {error,{already_started,<0.173.0>}}
-    7> filezcache:delete(mykey).
+    6> filezcache:delete(mykey).
     ok
 
 
@@ -59,9 +60,7 @@ TODO
 
 There are some known issues that need to be resolved:
 
- * On startup delete files that are unknown to the disk log
  * Add timeouts to `filezcache_entry` states `wait_for_data` and `streaming`
- * Extra intelligence in filezcache_entry to prevent evicting active entries during garbage collection
 
 <!-- Badges -->
 [hexpm]: https://hex.pm/packages/filezcache

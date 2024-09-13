@@ -1,8 +1,15 @@
 %% @private
 %% @author Marc Worrell
-%% @copyright 2013-2014 Marc Worrell
+%% @copyright 2013-2024 Marc Worrell
+%% @doc Manage all files in the filezcache directory. Handle insertion,
+%% lookup, deletion and streaming files.
+%% @end
 
-%% Copyright 2013-2014 Marc Worrell
+% TODO:
+% - Periodic write file_entry tab to disk (via temp file, atomic action)
+% - Read file_entry tab from disk
+
+%% Copyright 2013-2024 Marc Worrell
 %%
 %% Licensed under the Apache License, Version 2.0 (the "License");
 %% you may not use this file except in compliance with the License.
@@ -16,26 +23,25 @@
 %% See the License for the specific language governing permissions and
 %% limitations under the License.
 
-%%% @doc Manage all entries.
-
 -module(filezcache_entry_manager).
 
 -behaviour(gen_server).
 
 -include_lib("kernel/include/file.hrl").
+-include_lib("kernel/include/logger.hrl").
 
 -export([
-        start_link/0,
-        insert/2,
-        lookup/1,
-        lookup/2,
-        delete/1,
-        gc/1,
-        stats/0,
-        log_access/1,
-        log_access/2,
-        log_ready/5
-    ]).
+    start_link/0,
+    insert/2,
+    lookup/1,
+    lookup/2,
+    delete/1,
+    gc/1,
+    stats/0,
+    log_access/1,
+    log_access/2,
+    log_ready/5
+]).
 
 -export([
     init/1,
@@ -44,53 +50,54 @@
     handle_info/2,
     terminate/2,
     code_change/3
-    ]).
-
--export([
-    ensure_tables/0
-    ]).
-
--record(filezcache_log_entry, {
-        key,
-        filename,
-        size,
-        checksum
-    }).
-
-
--record(state, {
-    % Monitors for cache write entries
-    monitors,
-    sizes,
-
-    % Monitors for key entries referring to cache keys
-    key2referrers,
-    referrer2keys,
-
-    iterator = start,
-    recent :: list(),
-    gc_candidate_pool = [] :: list(),
-    bytes = 0 :: integer(),
-    max_bytes :: integer() 
-    }).
+]).
 
 
 -define(TIMEOUT, infinity).
 
-% Garbage collection setings
--define(GC_INTERVAL, 1000). 
--define(GC_MAX_BYTES, 10737418240).
--define(GC_POOL_SIZE, 100).
--define(GC_CHANCE_1_IN_N, 20).
+% Max cache size and garbage collection setings
+-define(GC_MAX_BYTES, 10_737_418_240). % 10G
+-define(GC_INTERVAL, 1000).
+-define(GC_BATCH, 500).
 
-% Every 10 minutes we empty the oldest table with recently used items
--define(RECENT_INTERVAL, 60000).
+-define(TICK_INTERVAL, 1000).
+-define(TICKS_RECENT, 1).
+
+% Periodically write the log to disk (10 min)
+-define(WRITE_LOG_INTERVAL, 600_000).
+
+% Names of ETS tables
+-define(FILE_ENTRY_TAB, filezcache_entries_tab).
+-define(FILENAME_TAB, filezcache_filename_tab).
+
+% Name of the stored log file in the journal dir
+-define(LOG_FILENAME, "filezcache-entries.dat").
+
+-record(filezcache_entry, {
+    key :: term(),
+    filename :: binary(),
+    size = undefined :: undefined | non_neg_integer(),
+    checksum = undefined :: undefined | binary(),
+    lru_tick = 0 :: non_neg_integer()
+}).
+
+-record(state, {
+    % Monitors for cache write entries
+    monitors = #{} :: map(),
+
+    % Monitors for key entry processes referring to cache keys
+    key2referrers = #{} :: map(),
+    referrer2keys = #{} :: map(),
+
+    lru :: filezcache_lru:lru(),
+    tick = ?TICKS_RECENT :: non_neg_integer(),
+    bytes = 0 :: non_neg_integer()
+}).
 
 
 %% API
 
 start_link() ->
-    ok = ensure_tables(),
     gen_server:start_link({local, ?MODULE}, ?MODULE, [], []).
 
 stats() ->
@@ -103,21 +110,25 @@ lookup(Key) ->
     lookup(Key, undefined).
 
 lookup(Key, MonitorPid) ->
-    case mnesia:dirty_read(filezcache_log_entry, Key) of
+    case ets:lookup(?FILE_ENTRY_TAB, Key) of
         [] ->
             {error, enoent};
-        [#filezcache_log_entry{size=undefined}] ->
+        [ #filezcache_entry{ size = undefined } ] ->
             {error, enoent};
-        [#filezcache_log_entry{size=Size, filename=Filename}] ->
+        [ #filezcache_entry{ size = Size, filename = Filename } ] ->
+            log_access(Key, MonitorPid),
             case filelib:is_regular(Filename) of
                 true ->
-                    log_access(Key, MonitorPid),
                     {ok, {file, Size, Filename}};
                 false ->
-                    delete(Key, Filename),
+                    delete_file(Key, Filename),
                     {error, enoent}
-            end 
+            end
     end.
+
+%% @doc Delete a key if it is inactive, ie. not being used by another process.
+delete(Key) ->
+    gen_server:call(?MODULE, {delete, Key}).
 
 gc(Key) ->
     gen_server:cast(?MODULE, {gc, Key}).
@@ -128,6 +139,8 @@ log_access(Key) ->
 log_access(Key, MonitorPid) ->
     gen_server:cast(?MODULE, {log_access, Key, MonitorPid}).
 
+%% @doc Called by the filezcache_entry, with undefined Size when starting and a defined
+%% size when the file is completely written to the cache.
 log_ready(EntryPid, Key, Filename, Size, Checksum) ->
     gen_server:cast(?MODULE, {log_ready, EntryPid, Key, Filename, Size, Checksum}).
 
@@ -135,23 +148,17 @@ log_ready(EntryPid, Key, Filename, Size, Checksum) ->
 %% gen_server callbacks
 
 init([]) ->
+    ok = ensure_tables(),
     filezcache_store:init(),
     gen_server:cast(self(), log_init),
+    timer:send_after(?TICK_INTERVAL, tick),
     timer:send_after(?GC_INTERVAL, gc),
-    timer:send_after(?RECENT_INTERVAL, recent_rotate),
+    timer:send_after(?WRITE_LOG_INTERVAL, write_log),
     {ok, #state{
-            sizes = ets:new(?MODULE, [set, private]),
-            monitors = gb_trees:empty(),
-            recent = [ 
-                ets:new(filezcache_recent_1, [set]), 
-                ets:new(filezcache_recent_2, [set]),
-                ets:new(filezcache_recent_3, [set])
-            ],
-            key2referrers = dict:new(),
-            referrer2keys = dict:new(),
-            max_bytes = max_bytes()}}.
+        lru = filezcache_lru:new()
+    }}.
 
-handle_call({insert, Key, WriterPid, Opts}, _From, State) ->
+handle_call({insert, Key, WriterPid, Opts}, _From, #state{ monitors = Monitors } = State) ->
     case filezcache_store:lookup(Key) of
         {ok, Pid} ->
             {reply, {error, {already_started, Pid}}, State};
@@ -160,129 +167,167 @@ handle_call({insert, Key, WriterPid, Opts}, _From, State) ->
             filezcache_store:insert(Key, Pid),
             filezcache_event:insert(Key),
             Mon = erlang:monitor(process, Pid),
-            State1 = State#state{monitors=gb_trees:enter(Mon, {Key, Pid}, State#state.monitors)},
+            State1 = State#state{
+                monitors = Monitors#{ Mon => {Key, Pid} }
+            },
             State2 = case proplists:get_value(monitor, Opts) of
-                true -> 
+                true ->
                     maybe_add_key_referrer(Key, WriterPid, State1);
                 _ ->
                     State1
             end,
             {reply, {ok, Pid}, State2}
     end;
+handle_call({delete, Key}, _From, State) ->
+    % Delete a key if it isn't "hot" and is not referred to by any processes.
+    case filezcache_store:lookup(Key) of
+        {ok, _Pid} ->
+            {reply, {error, writing}, State};
+        {error, enoent} ->
+            case is_referred(Key, State) of
+                true ->
+                    {reply, {error, locked}, State};
+                false ->
+                    State1 = delete_key(Key, State),
+                    {reply, ok, State1}
+            end
+    end;
 handle_call(stats, _From, State) ->
     Stats = #{
         bytes => State#state.bytes,
         max_bytes => max_bytes(),
-        processes => gb_trees:size(State#state.monitors),
-        entries => mnesia:table_info(filezcache_log_entry, size),
-        referrers => dict:size(State#state.referrer2keys),
-        gc_candidate_pool => State#state.gc_candidate_pool
+        processes => maps:size(State#state.monitors),
+        entries => ets:info(?FILE_ENTRY_TAB, size),
+        referrers => maps:size(State#state.referrer2keys)
     },
     {reply, Stats, State}.
 
 handle_cast({repop, Key, Filename, undefined, _Checksum}, State) ->
     case filezcache_store:lookup(Key) of
         {ok, _Pid} ->
+            % Some process is inserting this entry - ignore.
             ok;
         {error, enoent} ->
-            delete(Key, Filename)
+            % Incomplete entry - delete
+            delete_file(Key, Filename)
     end,
     {noreply, State};
-handle_cast({repop, Key, _Filename, Size, _Checksum}, State) ->
+handle_cast({repop, Key, _Filename, Size, _Checksum}, #state{ lru = LRU } = State) ->
     case filezcache_store:lookup(Key) of
         {ok, _Pid} ->
+            % Still writing
             {noreply, State};
         {error, enoent} ->
-            {noreply, State#state{bytes=State#state.bytes+Size}}
+            % Present - register in LRU
+            LRU1 = filezcache_lru:push(Key, State#state.tick, LRU),
+            {noreply, State#state{
+                bytes = State#state.bytes + Size,
+                lru = LRU1
+            }}
     end;
-handle_cast({delete_if_inactive, Key, Filename}, State) ->
-    case filezcache_store:lookup(Key) of
+handle_cast({delete_if_inactive, Key}, State) ->
+    % Delete a key if it isn't "hot" and is not referred to by any processes.
+    State1 = case filezcache_store:lookup(Key) of
         {ok, _Pid} ->
-            nop;
+            State;
         {error, enoent} ->
             case is_recently_used(Key, State) orelse is_referred(Key, State) of
                 true ->
-                    nop;
+                    State;
                 false ->
-                    delete(Key, Filename)
+                    delete_key(Key, State)
             end
     end,
-    {noreply, State};
+    {noreply, State1};
 handle_cast({gc, Key}, State) ->
-    case filezcache_store:lookup(Key) of
+    State1 = case filezcache_store:lookup(Key) of
         {ok, _Pid} ->
-            {noreply, State};
+            State;
         {error, enoent} ->
             case is_recently_used(Key, State) orelse is_referred(Key, State) of
                 true ->
-                    {noreply, State};
+                    State;
                 false ->
-                    {ok, Size} = delete(Key),
-                    {noreply, State#state{bytes=State#state.bytes - Size}}
+                    delete_key(Key, State)
             end
-    end;
+    end,
+    {noreply, State1};
 
 handle_cast(log_init, State) ->
     proc_lib:spawn_link(fun() -> repopulate() end),
     {noreply, State};
 
-%% Log a cache entry to the disk log
-handle_cast({log_ready, Pid, Key, Filename, Size, Checksum}, #state{bytes=Bytes} = State) ->
-    F = fun() ->
-            mnesia:write(#filezcache_log_entry{key=Key, filename=Filename, size=Size, checksum=Checksum})
-        end,
-    mnesia:activity(transaction, F),
+handle_cast({log_ready, Pid, Key, Filename, Size, Checksum}, #state{ bytes = Bytes, lru = LRU } = State) ->
+    % File is succesfully (being) inserted into the cache.
+    Entry = #filezcache_entry{
+        key = Key,
+        filename = Filename,
+        size = Size,
+        checksum = Checksum,
+        lru_tick = State#state.tick
+    },
+    ets:insert(?FILE_ENTRY_TAB, Entry),
+    ets:insert(?FILENAME_TAB, {Filename, Key}),
     filezcache_event:insert_ready(Key, Size, Filename),
-    case Size of
-        undefined -> ok;
-        _ -> filezcache_entry:logged(Pid)
+    State1 = case Size of
+        undefined ->
+            State;
+        _ ->
+            % Close the entry process - the file is safefly recorded in the ets table.
+            filezcache_entry:logged(Pid),
+            State#state{ bytes = Bytes + Size }
     end,
-    {noreply, State#state{bytes=Bytes + case Size of undefined -> 0; _ -> Size end}};
+    LRU1 = filezcache_lru:push(Key, State#state.tick, LRU),
+    {noreply, State1#state{ lru = LRU1 }};
 
-%% Remove recently used keys from the eviction pool
-handle_cast({log_access, Key, MonitorPid}, #state{gc_candidate_pool=Pool, recent=[Table|_]} = State) ->
-    ets:insert(Table, {Key, os:timestamp()}),
-    State1 = State#state{gc_candidate_pool=lists:delete(Key, Pool)},
-    {noreply, maybe_add_key_referrer(Key, MonitorPid, State1)};
+handle_cast({log_access, Key, MonitorPid}, #state{ lru = LRU } = State) ->
+    % Log recent access to this key, and optionally add the Pid to the list of processes
+    % handling this key.
+    LRU1 = filezcache_lru:push(Key, State#state.tick, LRU),
+    {noreply, maybe_add_key_referrer(Key, MonitorPid, State#state{ lru = LRU1 })};
 
 handle_cast(_Msg, State) ->
     {noreply, State}.
 
-handle_info({'DOWN', MRef, process, Pid, _Reason}, #state{monitors=Monitors, bytes=Bytes} = State) ->
-    State1 = case gb_trees:lookup(MRef, State#state.monitors) of
-        {value, {Key, Pid}} ->
+handle_info({'DOWN', MRef, process, Pid, _Reason}, #state{ monitors = Monitors } = State) ->
+    State2 = case maps:get(MRef, Monitors, error) of
+        {Key, MPid} when MPid =:= Pid ->
             filezcache_store:delete(Key),
-            Bytes1 = case is_logged(Key) of
+            State1 = case is_logged(Key) of
                 true ->
-                    Bytes;
+                    State;
                 false ->
-                    {ok, FileSize} = delete(Key),
+                    S1 = delete_key(Key, State),
                     filezcache_event:delete(Key),
-                    Bytes - FileSize
+                    S1
             end,
-            State#state{monitors = gb_trees:delete(MRef, Monitors), bytes=Bytes1};
-        none ->
+            State1#state{
+                monitors = maps:remove(MRef, Monitors)
+            };
+        error ->
             State
     end,
-    State2 = case dict:find(Pid, State1#state.referrer2keys) of
-        {ok, RefKeys} ->
-            State1#state{
-                referrer2keys = dict:erase(Pid, State#state.referrer2keys), 
-                key2referrers = remove_referrer(Pid, RefKeys, State#state.key2referrers)
-            };
-        error -> 
-            State1
+    State3 = case maps:get(Pid, State2#state.referrer2keys, error) of
+        error ->
+            State2;
+        RefKeys ->
+            State2#state{
+                referrer2keys = maps:remove(Pid, State2#state.referrer2keys),
+                key2referrers = remove_referrer(Pid, RefKeys, State2#state.key2referrers)
+            }
     end,
-    {noreply, State2};
+    {noreply, State3};
 handle_info(gc, State) ->
     State1 = do_gc(State),
     timer:send_after(?GC_INTERVAL, gc),
     {noreply, State1};
-handle_info(recent_rotate, #state{recent=Tables} = State) ->
-    timer:send_after(?RECENT_INTERVAL, recent_rotate),
-    ets:delete_all_objects(lists:last(Tables)),
-    Tables1 = [ lists:last(Tables) | lists:sublist(Tables, length(Tables)-1) ],
-    {noreply, State#state{recent=Tables1}};
+handle_info(tick, #state{ tick = Tick } = State) ->
+    timer:send_after(?TICK_INTERVAL, tick),
+    {noreply, State#state{ tick = Tick + 1 }};
+handle_info(write_log, #state{} = State) ->
+    write_log(),
+    timer:send_after(?WRITE_LOG_INTERVAL, write_log),
+    {noreply, State};
 handle_info(_Info, State) ->
     {noreply, State}.
 
@@ -294,22 +339,21 @@ code_change(_OldVsn, State, _Extra) ->
 
 
 %% @doc Check if the key is in the list of recently used entries
-is_recently_used(Key, #state{recent=Tables}) ->
-    lists:any(fun(Table) ->
-                 ets:lookup(Table, Key) =/= []
-              end,
-              Tables).
+is_recently_used(Key, #state{ tick = Tick }) ->
+    case ets:lookup(?FILE_ENTRY_TAB, Key) of
+        [ #filezcache_entry{ lru_tick = LRUTick } ] ->
+            LRUTick >= Tick - ?TICKS_RECENT;
+        [] ->
+            false
+    end.
 
 is_logged(Key) ->
-    F = fun() ->
-            mnesia:read(filezcache_log_entry, Key)
-        end,
-    case mnesia:activity(transaction, F) of
+    case ets:lookup(?FILE_ENTRY_TAB, Key) of
         [] ->
             false;
-        [#filezcache_log_entry{size=undefined}] ->
+        [ #filezcache_entry{ size = undefined } ] ->
             false;
-        [#filezcache_log_entry{}] ->
+        [ #filezcache_entry{} ] ->
             true
     end.
 
@@ -317,99 +361,114 @@ is_logged(Key) ->
 maybe_add_key_referrer(_Key, undefined, State) ->
     State;
 maybe_add_key_referrer(Key, Pid, State) ->
-    case dict:find(Pid, State#state.referrer2keys) of
-        {ok, RefKeys} ->
+    case maps:get(Pid, State#state.referrer2keys, error) of
+        error ->
+            do_add_key_referrer(Key, Pid, State);
+        RefKeys ->
             case lists:member(Key, RefKeys) of
                 true ->
                     State;
                 false ->
                     do_add_key_referrer(Key, Pid, State)
-            end;
-        error ->
-            do_add_key_referrer(Key, Pid, State)
+            end
     end.
 
-do_add_key_referrer(Key, Pid, State) ->
+do_add_key_referrer(Key, Pid, #state{ key2referrers = KeyRef, referrer2keys = RefKey } = State) ->
     _ = erlang:monitor(process, Pid),
     State#state{
-        key2referrers = dict:append(Key, Pid, State#state.key2referrers), 
-        referrer2keys = dict:append(Pid, Key, State#state.referrer2keys)
+        key2referrers = KeyRef#{ Key => [ Pid | maps:get(Key, KeyRef, []) ] },
+        referrer2keys = RefKey#{ Pid => [ Key | maps:get(Pid, RefKey, []) ] }
     }.
 
 is_referred(Key, State) ->
-    dict:is_key(Key, State#state.key2referrers).
+    maps:is_key(Key, State#state.key2referrers).
 
 remove_referrer(_Pid, [], Key2Pids) ->
     Key2Pids;
 remove_referrer(Pid, [Key|Keys], Key2Pids) ->
-    case dict:find(Key, Key2Pids) of
-        {ok, Pids} ->
+    case maps:get(Key, Key2Pids, error) of
+        error ->
+            remove_referrer(Pid, Keys, Key2Pids);
+        Pids ->
             case lists:delete(Pid, Pids) of
                 [] ->
-                    remove_referrer(Pid, Keys, dict:erase(Key, Key2Pids));
+                    remove_referrer(Pid, Keys, maps:remove(Key, Key2Pids));
                 Pids1 ->
-                    remove_referrer(Pid, Keys, dict:store(Key, Pids1, Key2Pids))
-            end;
-        error ->
-            remove_referrer(Pid, Keys, Key2Pids)
-    end. 
-
-%% @doc Ensure that the proper filezcache_log table has been created
-ensure_tables() ->
-    TabDef = [
-        {type, set},
-        {record_name, filezcache_log_entry},
-        {index, [#filezcache_log_entry.filename]},
-        {attributes, record_info(fields, filezcache_log_entry)}
-        | case application:get_env(mnesia, dir) of
-             {ok, _} -> [ {disc_copies, [node()]} ];
-             undefined -> []
-          end
-    ],
-    case mnesia:create_table(filezcache_log_entry, TabDef) of
-        {atomic, ok} -> ok;
-        {aborted, {already_exists, filezcache_log_entry}} -> ok
+                    remove_referrer(Pid, Keys, Key2Pids#{ Key =>  Pids1 })
+            end
     end.
 
+%% @doc Ensure that the proper filezcache_log and LRU tables have been created.
+ensure_tables() ->
+    % Key to filename, #filezcache_entry{}
+    ets:new(?FILE_ENTRY_TAB, [
+            set,
+            protected,
+            named_table,
+            {keypos, #filezcache_entry.key}
+        ]),
+    % Filename to key {filename, key}
+    ets:new(?FILENAME_TAB, [
+            set,
+            protected,
+            named_table,
+            {keypos, 1}
+        ]),
+    ok.
 
 %% @doc Repopulates the cache using the log
 repopulate() ->
-    Keys = mnesia:dirty_all_keys(filezcache_log_entry), 
-    error_logger:info_msg("filezcache: repopulating cache with ~p keys", [length(Keys)]),
-    repopulate(Keys),
-    error_logger:info_msg("filezcache: scanning cache directory for unknown files."),
+    % Read the FILE_ENTRY_TAB from disk
+    SavedEntries = read_log(),
+    lists:foreach(
+        fun
+            (#filezcache_entry{ size = undefined, filename = Filename }) ->
+                file:delete(Filename);
+            (E) ->
+                ets:insert(?FILE_ENTRY_TAB, E)
+        end,
+        SavedEntries),
+    % Check the file entry tab with the journal dir
+    Entries = ets:tab2list(?FILE_ENTRY_TAB),
+    ?LOG_INFO(#{
+        in => filezcache,
+        text => <<"Populating filezcache with existing keys from the log">>,
+        result => ok,
+        count => length(Entries)
+    }),
+    repopulate(Entries),
     scan_cache().
 
 repopulate([]) ->
     ok;
-repopulate([Key|Keys]) ->
-    F = fun() ->
-            mnesia:read(filezcache_log_entry, Key)
-        end,
-    Rs = mnesia:activity(transaction, F),
-    lists:foreach(fun repop_term/1, Rs),
-    repopulate(Keys).
-
-repop_term(#filezcache_log_entry{key=Key, filename=Filename, size=Size, checksum=Checksum}) ->
+repopulate([ #filezcache_entry{ key = Key, filename = Filename, size = Size, checksum = Checksum } | Entries ]) ->
+    ets:insert(?FILENAME_TAB, {Filename, Key}),
     case filezcache_store:lookup(Key) of
         {error, enoent} ->
             case file:read_file_info(Filename) of
-                {ok, #file_info{type=regular, size=Size}} ->
+                {ok, #file_info{ type = regular, size = Size }} ->
                     gen_server:cast(?MODULE, {repop, Key, Filename, Size, Checksum});
-                {ok, #file_info{type=regular, size=_OtherSize}} ->
+                {ok, #file_info{ type = regular, size = _OtherSize }} ->
                     gen_server:cast(?MODULE, {delete_if_inactive, Key});
                 _Other ->
-                    nop
+                    gen_server:cast(?MODULE, {delete_if_inactive, Key})
             end;
         {ok, _Pid} ->
             nop
-    end;
-repop_term(_Term) ->
-    ok.
+    end,
+    repopulate(Entries).
 
 %% @doc Scan the cache directories, remove all files not in the log
 scan_cache() ->
-    scan_dir(filezcache:data_dir()).
+    Dir = filezcache:data_dir(),
+    ?LOG_INFO(#{
+        in => filezcache,
+        text => <<"Removing unregistered files from the filezcache directory">>,
+        result => ok,
+        what => remove_unregistered,
+        directory => iolist_to_binary(Dir)
+    }),
+    scan_dir(Dir).
 
 scan_dir(Dir) ->
     case file:list_dir(Dir) of
@@ -417,7 +476,7 @@ scan_dir(Dir) ->
             scan_files(Dir, Files);
         {error, _} ->
             ok
-    end. 
+    end.
 
 scan_files(_Dir, []) ->
     ok;
@@ -437,125 +496,141 @@ scan_files(Dir, [F|Fs]) ->
     scan_files(Dir, Fs).
 
 
-%% @doc Delete an entry by key
-delete(Key) ->
-    F = fun() ->
-            mnesia:read(filezcache_log_entry, Key)
-        end,
-    case mnesia:activity(transaction, F) of
-        [] -> 
-            {ok, 0};
-        [#filezcache_log_entry{key=Key,filename=Filename, size=Size}] ->
-            ok = delete(Key,Filename),
+%% @doc Delete an entry by key, return the number of bytes released
+%% from the file cache.
+delete_key(Key, #state{ lru = LRU } = State) ->
+    {_, LRU1} = filezcache_lru:take(Key, LRU),
+    Delta = case ets:lookup(?FILE_ENTRY_TAB, Key) of
+        [] ->
+            0;
+        [ #filezcache_entry{ filename = Filename, size = Size } ] ->
+            ok = delete_file(Key, Filename),
             case Size of
-                undefined -> {ok, 0};
-                _ -> {ok, Size}
+                undefined -> 0;
+                _ -> Size
             end
-    end.
+    end,
+    State#state{
+        bytes = State#state.bytes - Delta,
+        lru = LRU1
+    }.
 
 %% @doc Delete an entry and its associated cache file.
-delete(Key, Filename) ->
-    F = fun() ->
-            mnesia:delete({filezcache_log_entry, Key})
-        end,
-    mnesia:activity(transaction, F),
+delete_file(Key, Filename) ->
     _ = file:delete(Filename),
+    ets:delete(?FILENAME_TAB, Filename),
+    ets:delete(?FILE_ENTRY_TAB, Key),
     ok.
 
 %% @doc Find an entry by the cached file
-find_by_filename(Path) ->
-    F = fun() ->
-            mnesia:index_read(filezcache_log_entry, Path, #filezcache_log_entry.filename)
+find_by_filename(Path) when is_list(Path) ->
+    find_by_filename(unicode:characters_to_binary(Path, utf8));
+find_by_filename(Path) when is_binary(Path) ->
+    Ks = ets:lookup(?FILENAME_TAB, Path),
+    L = lists:map(
+        fun({_Filename, K}) ->
+            ets:lookup(?FILE_ENTRY_TAB, K)
         end,
-    mnesia:activity(transaction, F).
+        Ks),
+    lists:flatten(L).
 
 
-%% @doc Perform a gc step, keep eviction pool with gc-candidates populated
+%% @doc Perform a gc step, drop least recently used entries till we get to the
+%% desired cache size. We delete max GC_BATCH files per garbage collect step.
 do_gc(State) ->
-    State1 = maybe_evict(State),
-    fill_pool(State1, normal, 1).
+    do_gc(State, ?GC_BATCH).
 
-maybe_evict(#state{gc_candidate_pool=[], bytes=Bytes} = State) ->
-    case Bytes > max_bytes() of
-        true -> do_gc(fill_pool(State, eager, 1));
-        false -> State
-    end;
-maybe_evict(#state{gc_candidate_pool=Pool, bytes=Bytes} = State) ->
-    case Bytes > max_bytes() of
-        true -> State#state{gc_candidate_pool=random_evict(Pool)};
-        false -> State
-    end;
-maybe_evict(State) ->
-    State.
-
-
-fill_pool(State, normal, N) when N >= 20 ->
+do_gc(State, 0) ->
     State;
-fill_pool(State, eager, N) when N >= 100 ->
-    State;
-fill_pool(#state{gc_candidate_pool=Pool, iterator=Iterator} = State, Method, N) ->
-    case length(Pool) < ?GC_POOL_SIZE of
+do_gc(#state{ bytes = Bytes, lru = LRU } = State, N) ->
+    Max = max_bytes(),
+    if
+        Max >= Bytes ->
+            State;
         true ->
-            {Candidates, Iterator1} = iterate(Iterator), 
-            Pool1 = fill_pool_1(Pool, Candidates, Method),
-            fill_pool(State#state{gc_candidate_pool=Pool1, iterator=Iterator1}, Method, N+1);
-        false ->
-            State
-    end.
-
-fill_pool_1(Pool, [], _Method) ->
-    Pool;
-fill_pool_1(Pool, [#filezcache_log_entry{key=Key, filename=Filename}|Cs], Method) ->
-    case not lists:member(Key, Pool) andalso do_select(Method) of
-        true ->
-            case filelib:is_regular(Filename) of
+            case filezcache_lru:empty(LRU) of
                 true ->
-                    fill_pool_1([Key|Pool], Cs, Method);
+                    State;
                 false ->
-                    delete(Key),
-                    fill_pool_1(Pool, Cs, Method)
-            end;
-        false ->
-            fill_pool_1(Pool, Cs, Method)
+                    State1 = drop_oldest_key(State),
+                    do_gc(State1, N - 1)
+            end
     end.
 
-do_select(eager) ->
-    true;
-do_select(normal) ->
-    rand_uniform(?GC_CHANCE_1_IN_N) =:= 1.
+drop_oldest_key(#state{ lru = LRU } = State) ->
+    {Key, _Value, LRU1} = filezcache_lru:pop(LRU),
+    case filezcache_store:lookup(Key) of
+        {ok, _Pid} ->
+            LRU2 = filezcache_lru:push(Key, State#state.tick, LRU1),
+            State#state{ lru = LRU2 };
+        {error, enoent} ->
+            case is_referred(Key, State) of
+                true ->
+                    LRU2 = filezcache_lru:push(Key, State#state.tick, LRU1),
+                    State#state{ lru = LRU2 };
+                false ->
+                    Delta = case ets:lookup(?FILE_ENTRY_TAB, Key) of
+                        [] ->
+                            0;
+                        [ #filezcache_entry{ filename = Filename, size = Size } ] ->
+                            ok = delete_file(Key, Filename),
+                            case Size of
+                                undefined -> 0;
+                                _ -> Size
+                            end
+                    end,
+                    State#state{
+                        bytes = State#state.bytes - Delta,
+                        lru = LRU1
+                    }
+            end
+    end.
 
-random_evict([]) -> 
-    [];
-random_evict(Pool) ->
-    Key = lists:nth(rand_uniform(length(Pool)), Pool),
-    gc(Key),
-    lists:delete(Key, Pool).
 
+%% @doc Return the max cache size from the application config.
 max_bytes() ->
     case application:get_env(filezcache, max_bytes) of
         undefined -> ?GC_MAX_BYTES;
         {ok, N} when is_integer(N) -> N
     end.
 
-
-%% @doc Iterate over mnesia
-iterate(start) ->
-    iterate(0);
-iterate(SlotNr) ->
-    case get_slot(SlotNr) of
-        '$end_of_table' -> 
-            {[], start};
-        Entries -> 
-            {Entries, SlotNr+1}
+%% @doc Read the saved log from disk.
+read_log() ->
+    case file:read_file(filename_log()) of
+        {ok, Data} ->
+            try
+                Es = binary_to_term(Data),
+                lists:filtermap(
+                    fun
+                        (#filezcache_entry{} = E) ->
+                            {true, E#filezcache_entry{ lru_tick = 0 }};
+                        (_) ->
+                            false
+                    end,
+                    Es)
+            catch _:_ ->
+                []
+            end;
+        {error, _} ->
+            []
     end.
 
-get_slot(SlotNr) ->
-    try 
-        mnesia:dirty_slot(filezcache_log_entry, SlotNr)
-    catch
-        error:badarg -> '$end_of_table'
+%% @doc Save the log to disk
+write_log() ->
+    Es = ets:tab2list(?FILE_ENTRY_TAB),
+    TmpFilename = iolist_to_binary([ filename_log(), ".tmp" ]),
+    case file:write_file(TmpFilename, erlang:term_to_binary(Es, [ compressed ])) of
+        ok ->
+            case file:rename(TmpFilename, filename_log()) of
+                ok -> ok;
+                {error, _} = Error ->
+                    file:delete(TmpFilename),
+                    Error
+            end;
+        {error, _} = Error ->
+            file:delete(TmpFilename),
+            Error
     end.
 
--spec rand_uniform( pos_integer() ) -> pos_integer().
-rand_uniform(N) ->
-    rand:uniform(N).
+filename_log() ->
+    filename:join([filezcache:journal_dir(), ?LOG_FILENAME]).

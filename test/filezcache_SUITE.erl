@@ -119,17 +119,33 @@ eviction_test(_Config) ->
     % Insert 1000 entries of 20 bytes each
     lists:foreach(
         fun(K) ->
-            filezcache:insert(K, Data)
+            filezcache:insert(K, Data),
+            % Bump key 1 to the back of the LRU
+            {ok, _} = filezcache:lookup_file(1)
         end,
         lists:seq(1,1000)),
     Stats0 = filezcache:stats(),
     timer:sleep(2000),
     Stats1 = filezcache:stats(),
-    % Eviction should have started now.
+    % Eviction should have started now with dropping the
+    % first batch of files from the cache.
     #{ bytes := Size0 } = Stats0,
     #{ bytes := Size1 } = Stats1,
-    Size1 < Size0.
-
+    true = (Size1 < Size0),
+    % Oldest files should be gone
+    lists:foreach(
+        fun(K) ->
+            {error, enoent} = filezcache:lookup_file(K)
+        end,
+        lists:seq(2,200)),
+    % Key 1 should still be present
+    {ok, _} = filezcache:lookup_file(1),
+    % At least the newest 49 files should be present
+    lists:foreach(
+        fun(K) ->
+            {ok, _} = filezcache:lookup_file(K)
+        end,
+        lists:seq(952,1000)).
 
 %%--------------------------------------------------------------------
 %% SUPPORT FUNCTIONS

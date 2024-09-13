@@ -1,8 +1,10 @@
 %% @private
 %% @author Marc Worrell
-%% @copyright 2013-2014 Marc Worrell
+%% @copyright 2013-2024 Marc Worrell
+%% @doc Log filecache events to logger.
+%% @end
 
-%% Copyright 2013-2014 Marc Worrell
+%% Copyright 2013-2024 Marc Worrell
 %%
 %% Licensed under the Apache License, Version 2.0 (the "License");
 %% you may not use this file except in compliance with the License.
@@ -26,6 +28,8 @@
 
 -record(state, {}).
 
+-include_lib("kernel/include/logger.hrl").
+
 %% API
 add_handler() ->
     filezcache_event:add_handler(?MODULE, []).
@@ -38,16 +42,42 @@ init([]) ->
     {ok, #state{}}.
 
 handle_event({insert, Key}, State) ->
-    error_logger:info_msg("insert(~p)~n", [Key]),
+    ?LOG_INFO(#{
+        in => filezcache,
+        text => <<"Insert key start">>,
+        result => ok,
+        what => insert_key,
+        key => Key
+    }),
     {ok, State};
 handle_event({lookup, Key}, State) ->
-    error_logger:info_msg("lookup(~p)~n", [Key]),
+    ?LOG_INFO(#{
+        in => filezcache,
+        text => <<"Lookup key">>,
+        result => ok,
+        what => lookup_key,
+        key => Key
+    }),
     {ok, State};
 handle_event({delete, Key}, State) ->
-    error_logger:info_msg("delete(~p)~n", [Key]),
+    ?LOG_INFO(#{
+        in => filezcache,
+        text => <<"Delete key">>,
+        result => ok,
+        what => delete_key,
+        key => Key
+    }),
     {ok, State};
 handle_event({insert_ready, {Key, Size, Filename}}, State) ->
-    error_logger:info_msg("insert_ready(~p, ~p, ~p)~n", [Key, Size, Filename]),
+    ?LOG_INFO(#{
+        in => filezcache,
+        text => <<"Insert key done">>,
+        result => ok,
+        what => insert_ready,
+        key => Key,
+        size => Size,
+        filename => Filename
+    }),
     {ok, State}.
 
 handle_call(_Request, State) ->
