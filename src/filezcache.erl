@@ -315,6 +315,8 @@ delete(Key) ->
     case Result of
         ok ->
             filezcache_entry_manager:delete(Key);
+        {error, noproc} ->
+            filezcache_entry_manager:delete(Key);
         {error, _} = Error ->
             Error
     end.
