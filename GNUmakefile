@@ -7,8 +7,10 @@ APP       := zotonic
 REBAR := ./rebar3
 REBAR_URL := https://s3.amazonaws.com/rebar3/rebar3
 REBAR_OPTS ?=
+
+.PHONY: all doc test shell dialyzer compile upgrade-deps xref edoc edoc_private
+
 # Default target - update sources and call all compile rules in succession
-.PHONY: all
 all: compile
 
 $(REBAR):
@@ -18,7 +20,6 @@ $(REBAR):
 	chmod +x $(REBAR)
 
 # Use Rebar to get, update and compile dependencies
-.PHONY: upgrade-deps compile compile shell dialyzer xref test edoc
 
 upgrade-deps: $(REBAR)
 	$(REBAR) $(REBAR_OPTS) upgrade
@@ -38,6 +39,9 @@ xref: $(REBAR)
 test: $(REBAR)
 	$(REBAR) $(REBAR_OPTS) ct
 
+doc: $(REBAR)
+	$(REBAR) ex_doc
+
 edoc: $(REBAR)
 	$(REBAR) edoc
 
@@ -45,13 +49,13 @@ edoc_private: $(REBAR)
 	$(REBAR) as doc_private edoc
 
 # Cleaning
-.PHONY: clean_logs
+.PHONY: clean_logs clean clean_doc dist-clean
+
 clean_logs:
 	@echo "deleting logs:"
 	rm -f erl_crash.dump
 	rm -rf priv/log/*
 
-.PHONY: clean
 clean: clean_logs $(REBAR)
 	@echo "cleaning ebin:"
 	$(REBAR) $(REBAR_OPTS) clean
@@ -62,7 +66,6 @@ clean_doc:
 	@rm -f doc/erlang.png
 	@rm -f doc/edoc-info
 
-.PHONY: dist-clean
 dist-clean: clean
 	$(REBAR) $(REBAR_OPTS) clean -a
 	rm -rf _build doc deps
