@@ -58,7 +58,9 @@
 % Max cache size and garbage collection setings
 -define(GC_MAX_BYTES, 10_737_418_240). % 10G
 -define(GC_INTERVAL, 1000).
--define(GC_BATCH, 500).
+
+-define(GC_BATCH_PERIODIC, 500).
+-define(GC_BATCH_INSERT, 100).
 
 -define(TICK_INTERVAL, 1000).
 -define(TICKS_RECENT, 1).
@@ -273,12 +275,14 @@ handle_cast({log_ready, Pid, Key, Filename, Size, Checksum}, #state{ bytes = Byt
         undefined ->
             State;
         _ ->
-            % Close the entry process - the file is safefly recorded in the ets table.
+            % Close the entry process - the file is safely recorded in the ets table.
             filezcache_entry:logged(Pid),
             State#state{ bytes = Bytes + Size }
     end,
     LRU1 = filezcache_lru:push(Key, State#state.tick, LRU),
-    {noreply, State1#state{ lru = LRU1 }};
+    State2 = State1#state{ lru = LRU1 },
+    State3 = do_gc(State2, ?GC_BATCH_INSERT),
+    {noreply, State3};
 
 handle_cast({log_access, Key, MonitorPid}, #state{ lru = LRU } = State) ->
     % Log recent access to this key, and optionally add the Pid to the list of processes
@@ -538,7 +542,7 @@ find_by_filename(Path) when is_binary(Path) ->
 %% @doc Perform a gc step, drop least recently used entries till we get to the
 %% desired cache size. We delete max GC_BATCH files per garbage collect step.
 do_gc(State) ->
-    do_gc(State, ?GC_BATCH).
+    do_gc(State, ?GC_BATCH_PERIODIC).
 
 do_gc(State, 0) ->
     State;

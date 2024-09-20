@@ -114,9 +114,10 @@ cache_stream_test(_Config) ->
     ok.
 
 eviction_test(_Config) ->
-    Data = <<"0123456789987654310">>,
+    Data = <<"01234567899876543210">>,
     application:set_env(filezcache, max_bytes, 1000),
     % Insert 1000 entries of 20 bytes each
+    Stats0 = filezcache:stats(),
     lists:foreach(
         fun(K) ->
             filezcache:insert(K, Data),
@@ -124,14 +125,15 @@ eviction_test(_Config) ->
             {ok, _} = filezcache:lookup_file(1)
         end,
         lists:seq(1,1000)),
-    Stats0 = filezcache:stats(),
     timer:sleep(2000),
     Stats1 = filezcache:stats(),
     % Eviction should have started now with dropping the
     % first batch of files from the cache.
     #{ bytes := Size0 } = Stats0,
-    #{ bytes := Size1 } = Stats1,
-    true = (Size1 < Size0),
+    #{ bytes := Size1, entries := Entries1 } = Stats1,
+    true = (Size1 > Size0),
+    true = (Size1 =< 1000),
+    true = (Entries1 =< (1000 div size(Data))),
     % Oldest files should be gone
     lists:foreach(
         fun(K) ->
