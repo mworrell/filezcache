@@ -106,6 +106,7 @@ cache_stream_test(_Config) ->
     {error, eof} = file:read(IO, 1),
     true = erlang:is_process_alive(IO),
     ok = file:close(IO),
+    timer:sleep(100),
     false = erlang:is_process_alive(IO),
     false = erlang:is_process_alive(WriterPid),
     % Now the entry should be available as a file
