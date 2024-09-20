@@ -9,7 +9,7 @@ Filezcache - cache s3 and other files on disk
 =============================================
 
 This is a file caching system optimized for use with cowmachine
-but then also be used with other services.
+but can also be used with other services.
 
 It has some unique properties:
 
