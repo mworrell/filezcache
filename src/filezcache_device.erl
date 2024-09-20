@@ -1,8 +1,13 @@
 %% @private
 %% @author Marc Worrell
-%% @copyright 2014 Marc Worrell
+%% @copyright 2024 Marc Worrell
+%% @doc Simulates an IO device for reading files that are streamed
+%% from the external storage system to the server. This enables
+%% sending the files to clients before they are completely stored in
+%% the caching system.
+%% @end
 
-%% Copyright 2014 Marc Worrell
+%% Copyright 2024 Marc Worrell
 %%
 %% Licensed under the Apache License, Version 2.0 (the "License");
 %% you may not use this file except in compliance with the License.

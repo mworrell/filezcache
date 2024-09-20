@@ -1,7 +1,9 @@
 %% @author Marc Worrell
-%% @copyright 2013-2014 Marc Worrell
+%% @copyright 2013-2024 Marc Worrell
+%% @doc Filezcache api, insert, lookup, stream and delete cached files.
+%% @end
 
-%% Copyright 2013-2014 Marc Worrell
+%% Copyright 2013-2024 Marc Worrell
 %%
 %% Licensed under the Apache License, Version 2.0 (the "License");
 %% you may not use this file except in compliance with the License.
@@ -185,9 +187,10 @@ finish_stream(Pid) ->
 	Key :: term(),
 	Result :: {ok, {file, FileSize, Filename}}
             | {ok, {pid, pid()}}
-            | {error, term()},
+            | {error, Reason},
     FileSize :: non_neg_integer(),
-    Filename :: file:filename().
+    Filename :: file:filename(),
+    Reason :: enoent.
 locate_monitor(Key) ->
     case filezcache_entry_manager:lookup(Key, self()) of
         {ok, _Found} = OK ->
@@ -252,9 +255,11 @@ lookup(Key, Opts) ->
 
 -spec lookup_file(Key) -> Result when
 	Key :: term(),
-	Result :: {ok, {file, FileSize, Filename}} | {error, term()},
+	Result :: {ok, {file, FileSize, Filename}}
+            | {error, Reason},
     FileSize :: non_neg_integer(),
-    Filename :: file:filename_all().
+    Filename :: file:filename_all(),
+    Reason :: enoent.
 lookup_file(Key) ->
     lookup_file(Key, []).
 
@@ -263,7 +268,11 @@ lookup_file(Key) ->
 -spec lookup_file(PidOrKey, Opts) -> Result when
 	PidOrKey :: pid() | term(),
 	Opts :: list(),
-	Result :: term() | {error, enoent}.
+	Result :: {ok, {file, FileSize, Filename}}
+            | {error, Reason},
+    FileSize :: non_neg_integer(),
+    Filename :: file:filename_all(),
+    Reason :: enoent.
 lookup_file(Pid, Opts) when is_pid(Pid) ->
     try
         filezcache_entry:fetch_file(Pid, Opts)
@@ -274,7 +283,7 @@ lookup_file(Pid, Opts) when is_pid(Pid) ->
 lookup_file(Key, Opts) ->
     filezcache_event:lookup(Key),
     case filezcache_entry_manager:lookup(Key) of
-        {ok, Found} ->
+        {ok, _} = Found ->
             Found;
         {error, enoent} ->
             case filezcache_store:lookup(Key) of
@@ -294,14 +303,22 @@ lookup_file(Key, Opts) ->
 
 -spec delete(Key) -> Result when
 	Key :: term(),
-	Result :: ok | {error, lockedlog_a}.
+	Result :: ok | {error, Reason},
+    Reason :: lockedlog_a | writing | active.
 delete(Key) ->
-    {ok,_} = filezcache_entry_manager:delete(Key),
-    case filezcache_store:lookup(Key) of
+    Result = case filezcache_store:lookup(Key) of
         {ok, Pid} ->
             filezcache_entry:delete(Pid);
         {error, enoent} ->
             ok
+    end,
+    case Result of
+        ok ->
+            filezcache_entry_manager:delete(Key);
+        {error, noproc} ->
+            filezcache_entry_manager:delete(Key);
+        {error, _} = Error ->
+            Error
     end.
 
 %% @doc Check existence of Key in the data storage.

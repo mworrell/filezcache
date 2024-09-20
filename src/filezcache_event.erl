@@ -1,8 +1,10 @@
 %% @private
 %% @author Marc Worrell
-%% @copyright 2013-2014 Marc Worrell
+%% @copyright 2013-2024 Marc Worrell
+%% @doc gen_event notifier for filezcache events.
+%% @end
 
-%% Copyright 2013-2014 Marc Worrell
+%% Copyright 2013-2024 Marc Worrell
 %%
 %% Licensed under the Apache License, Version 2.0 (the "License");
 %% you may not use this file except in compliance with the License.

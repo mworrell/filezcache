@@ -1,8 +1,11 @@
 %% @private
 %% @author Marc Worrell
-%% @copyright 2014 Marc Worrell
+%% @copyright 2024 Marc Worrell
+%% @doc Supervisor for all files being streamed to filecache
+%% client processes (file readers).
+%% @end
 
-%% Copyright 2014 Marc Worrell
+%% Copyright 2024 Marc Worrell
 %%
 %% Licensed under the Apache License, Version 2.0 (the "License");
 %% you may not use this file except in compliance with the License.

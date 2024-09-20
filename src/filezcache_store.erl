@@ -1,9 +1,10 @@
 %% @private
 %% @author Marc Worrell
-%% @copyright 2013-2014 Marc Worrell
+%% @copyright 2013-2024 Marc Worrell
 %% @doc Manages the mapping between filezache_entry processes and their keys.
+%% @end
 
-%% Copyright 2013-2014 Marc Worrell
+%% Copyright 2013-2024 Marc Worrell
 %%
 %% Licensed under the Apache License, Version 2.0 (the "License");
 %% you may not use this file except in compliance with the License.
@@ -48,15 +49,15 @@ iterate(start) ->
     end;
 iterate(SlotNr) ->
     case get_slot(SlotNr) of
-        '$end_of_table' -> 
+        '$end_of_table' ->
             {[], start};
-        Entries -> 
+        Entries ->
             Pids = [ Pid || {_,Pid} <- Entries ],
             {Pids, SlotNr+1}
     end.
 
 get_slot(SlotNr) ->
-    try 
+    try
         ets:slot(?TABLE_ID, SlotNr)
     catch
         error:badarg -> '$end_of_table'
