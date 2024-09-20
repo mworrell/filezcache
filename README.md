@@ -1,4 +1,3 @@
-[![Build Status][gh badge]][gh]
 [![Hex.pm version][hexpm version]][hexpm]
 [![Hex.pm Downloads][hexpm downloads]][hexpm]
 [![Hex.pm Documentation][hexdocs documentation]][hexdocs]
@@ -69,6 +68,5 @@ There are some known issues that need to be resolved:
 [hexdocs documentation]: https://img.shields.io/badge/hex-docs-purple.svg?style=flat-curcle
 [hexdocs]: https://hexdocs.pm/filezcache
 [gh]: https://github.com/mworrell/filezcache/actions/workflows/test.yaml
-[gh badge]: https://img.shields.io/github/workflow/status/mworrell/filezcache/Test?style=flat-curcle
 [erlang version badge]: https://img.shields.io/badge/Supported%20Erlang%2FOTP-22.3%20to%2026-blue.svg?style=flat-curcle
 [license]: https://img.shields.io/badge/License-Apache_2.0-blue.svg?logo=apache&logoColor=red "Apache 2.0"
