@@ -189,7 +189,7 @@ finish_stream(Pid) ->
             | {ok, {pid, pid()}}
             | {error, Reason},
     FileSize :: non_neg_integer(),
-    Filename :: file:filename(),
+    Filename :: file:filename_all(),
     Reason :: enoent.
 locate_monitor(Key) ->
     case filezcache_entry_manager:lookup(Key, self()) of
@@ -378,7 +378,7 @@ insert_or_error({error, enoent}, Key, DataSource, Opts) ->
 %% @doc Return the directory for the storage of the cached files.
 
 -spec data_dir() -> Result when
-	Result :: file:filename().
+	Result :: file:filename_all().
 data_dir() ->
     case application:get_env(filezcache, data_dir) of
         undefined -> filename:join([priv_dir(), "data"]);
@@ -388,7 +388,7 @@ data_dir() ->
 %% @doc Return the directory for the storage of the `log/journal' files.
 
 -spec journal_dir() -> Result when
-	Result :: file:filename().
+	Result :: file:filename_all().
 journal_dir() ->
     case application:get_env(filezcache, journal_dir) of
         undefined -> filename:join([priv_dir(), "journal"]);
@@ -398,7 +398,7 @@ journal_dir() ->
 %% @doc Return priv directory location.
 
 -spec priv_dir() -> Result when
-	Result :: file:filename() | list().
+	Result :: file:filename_all().
 priv_dir() ->
     case code:priv_dir(?MODULE) of
         {error, bad_name} -> "priv";
@@ -408,7 +408,7 @@ priv_dir() ->
 %% @doc Return checksum.
 
 -spec checksum(Filename) -> Result when
-	Filename :: file:filename(),
+	Filename :: file:filename_all(),
 	Result :: binary().
 checksum(Filename) ->
     Ctx = crypto:hash_init(sha),
