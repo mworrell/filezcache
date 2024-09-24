@@ -114,6 +114,12 @@ insert(Key, Opts) ->
 lookup(Key) ->
     lookup(Key, undefined).
 
+-spec lookup(Key, MonitorPid) -> {ok, File} | {error, enoent} when
+    Key :: term(),
+    MonitorPid :: pid() | undefined,
+    File :: {file, Size, Filename},
+    Size :: non_neg_integer(),
+    Filename :: binary().
 lookup(Key, MonitorPid) ->
     case ets:lookup(?FILE_ENTRY_TAB, Key) of
         [] ->
