@@ -247,6 +247,7 @@ lookup(Key, Opts) ->
                 {ok, Pid} ->
                     filezcache_entry:fetch(Pid, Opts);
                 {error, _} = Error ->
+                    filezcache_entry_manager:record_stat(miss),
                     Error
             end
     end.
@@ -292,9 +293,11 @@ lookup_file(Key, Opts) ->
                         filezcache_entry:fetch_file(Pid, Opts)
                     catch
                         exit:{noproc, _} ->
+                            filezcache_entry_manager:record_stat(miss),
                             {error, enoent}
                     end;
                 {error, _} = Error ->
+                    filezcache_entry_manager:record_stat(miss),
                     Error
             end
     end.
@@ -342,7 +345,12 @@ where(Key) ->
                 processes := non_neg_integer(),
                 entries := non_neg_integer(),
                 referrers := non_neg_integer(),
-                gc_candidate_pool := list()
+                gc_candidate_pool := list(),
+                insert_count := non_neg_integer(),
+                delete_count := non_neg_integer(),
+                hit_count := non_neg_integer(),
+                miss_count := non_neg_integer(),
+                evict_count := non_neg_integer()
             }.
 stats() ->
     filezcache_entry_manager:stats().
