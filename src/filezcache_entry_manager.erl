@@ -5,10 +5,6 @@
 %% lookup, deletion and streaming files.
 %% @end
 
-% TODO:
-% - Periodic write file_entry tab to disk (via temp file, atomic action)
-% - Read file_entry tab from disk
-
 %% Copyright 2013-2024 Marc Worrell
 %%
 %% Licensed under the Apache License, Version 2.0 (the "License");
@@ -32,6 +28,7 @@
 
 -export([
     start_link/0,
+    record_stat/1,
     insert/2,
     lookup/1,
     lookup/2,
@@ -93,7 +90,13 @@
 
     lru :: filezcache_lru:lru(),
     tick = ?TICKS_RECENT :: non_neg_integer(),
-    bytes = 0 :: non_neg_integer()
+    bytes = 0 :: non_neg_integer(),
+
+    insert_count = 0 :: non_neg_integer(),
+    delete_count = 0 :: non_neg_integer(),
+    hit_count = 0 :: non_neg_integer(),
+    miss_count = 0  :: non_neg_integer(),
+    evict_count = 0 :: non_neg_integer()
 }).
 
 
@@ -131,6 +134,11 @@ lookup(Key, MonitorPid) ->
 %% @doc Delete a key if it is inactive, ie. not being used by another process.
 delete(Key) ->
     gen_server:call(?MODULE, {delete, Key}).
+
+-spec record_stat(What) -> ok when
+    What :: hit | miss | evict | insert.
+record_stat(What) ->
+    gen_server:cast(?MODULE, {stat, What}).
 
 gc(Key) ->
     gen_server:cast(?MODULE, {gc, Key}).
@@ -200,7 +208,12 @@ handle_call(stats, _From, State) ->
         max_bytes => max_bytes(),
         processes => maps:size(State#state.monitors),
         entries => ets:info(?FILE_ENTRY_TAB, size),
-        referrers => maps:size(State#state.referrer2keys)
+        referrers => maps:size(State#state.referrer2keys),
+        insert_count => State#state.insert_count,
+        delete_count => State#state.delete_count,
+        hit_count => State#state.hit_count,
+        miss_count => State#state.miss_count,
+        evict_count => State#state.evict_count
     },
     {reply, Stats, State}.
 
@@ -224,7 +237,8 @@ handle_cast({repop, Key, _Filename, Size, _Checksum}, #state{ lru = LRU } = Stat
             LRU1 = filezcache_lru:push(Key, State#state.tick, LRU),
             {noreply, State#state{
                 bytes = State#state.bytes + Size,
-                lru = LRU1
+                lru = LRU1,
+                insert_count = State#state.insert_count + 1
             }}
     end;
 handle_cast({delete_if_inactive, Key}, State) ->
@@ -280,7 +294,10 @@ handle_cast({log_ready, Pid, Key, Filename, Size, Checksum}, #state{ bytes = Byt
             State#state{ bytes = Bytes + Size }
     end,
     LRU1 = filezcache_lru:push(Key, State#state.tick, LRU),
-    State2 = State1#state{ lru = LRU1 },
+    State2 = State1#state{
+        lru = LRU1,
+        insert_count = State#state.insert_count + 1
+    },
     State3 = do_gc(State2, ?GC_BATCH_INSERT),
     {noreply, State3};
 
@@ -288,7 +305,21 @@ handle_cast({log_access, Key, MonitorPid}, #state{ lru = LRU } = State) ->
     % Log recent access to this key, and optionally add the Pid to the list of processes
     % handling this key.
     LRU1 = filezcache_lru:push(Key, State#state.tick, LRU),
-    {noreply, maybe_add_key_referrer(Key, MonitorPid, State#state{ lru = LRU1 })};
+    State1 = State#state{
+        lru = LRU1,
+        hit_count = State#state.hit_count + 1
+    },
+    {noreply, maybe_add_key_referrer(Key, MonitorPid, State1)};
+
+handle_cast({stat, What}, State) ->
+    State1 = case What of
+        insert -> State#state{ insert_count = State#state.insert_count + 1 };
+        delete -> State#state{ delete_count = State#state.delete_count + 1 };
+        hit -> State#state{ hit_count = State#state.hit_count + 1 };
+        miss -> State#state{ miss_count = State#state.miss_count + 1 };
+        evict -> State#state{ evict_count = State#state.evict_count + 1 }
+    end,
+    {noreply, State1};
 
 handle_cast(_Msg, State) ->
     {noreply, State}.
@@ -500,8 +531,7 @@ scan_files(Dir, [F|Fs]) ->
     scan_files(Dir, Fs).
 
 
-%% @doc Delete an entry by key, return the number of bytes released
-%% from the file cache.
+%% @doc Delete an entry by key.
 delete_key(Key, #state{ lru = LRU } = State) ->
     {_, LRU1} = filezcache_lru:take(Key, LRU),
     Delta = case ets:lookup(?FILE_ENTRY_TAB, Key) of
@@ -516,7 +546,8 @@ delete_key(Key, #state{ lru = LRU } = State) ->
     end,
     State#state{
         bytes = State#state.bytes - Delta,
-        lru = LRU1
+        lru = LRU1,
+        delete_count = State#state.delete_count + 1
     }.
 
 %% @doc Delete an entry and its associated cache file.
@@ -585,7 +616,8 @@ drop_oldest_key(#state{ lru = LRU } = State) ->
                     end,
                     State#state{
                         bytes = State#state.bytes - Delta,
-                        lru = LRU1
+                        lru = LRU1,
+                        evict_count = State#state.evict_count + 1
                     }
             end
     end.

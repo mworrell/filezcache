@@ -38,17 +38,35 @@ all() ->
 %%--------------------------------------------------------------------
 
 cache_binary_test(_Config) ->
+    #{
+        insert_count := 0,
+        hit_count := 0
+    } = filezcache:stats(),
     {ok, Pid} = filezcache:insert(a, <<"a">>),
     true = is_pid(Pid),
     {ok, {file, 1, File}} = filezcache:lookup(a),
+    #{
+        hit_count := 1,
+        miss_count := 0
+    } = filezcache:stats(),
     true = filelib:is_file(File),
     {ok, <<"a">>} = file:read_file(File),
     ok.
 
 cache_delete_test(_Config) ->
     % Delete the key from the previous test
+    #{
+        delete_count := 0
+    } = filezcache:stats(),
     ok = filezcache:delete(a),
+    #{
+        delete_count := 1,
+        miss_count := 0
+    } = filezcache:stats(),
     {error, enoent} = filezcache:lookup(a),
+    #{
+        miss_count := 1
+    } = filezcache:stats(),
     ok.
 
 cache_tmpfile_test(_Config) ->
@@ -130,11 +148,12 @@ eviction_test(_Config) ->
     Stats1 = filezcache:stats(),
     % Eviction should have started now with dropping the
     % first batch of files from the cache.
-    #{ bytes := Size0 } = Stats0,
-    #{ bytes := Size1, entries := Entries1 } = Stats1,
+    #{ bytes := Size0, evict_count := Evict0 } = Stats0,
+    #{ bytes := Size1, entries := Entries1, evict_count := Evict1 } = Stats1,
     true = (Size1 > Size0),
     true = (Size1 =< 1000),
     true = (Entries1 =< (1000 div size(Data))),
+    true = (Evict1 > Evict0),
     % Oldest files should be gone
     lists:foreach(
         fun(K) ->
