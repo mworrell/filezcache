@@ -53,7 +53,7 @@
 -define(TIMEOUT, infinity).
 
 % Max cache size and garbage collection setings
--define(GC_MAX_BYTES, 10_737_418_240). % 10G
+-define(GC_MAX_BYTES, 10737418240). % 10G
 -define(GC_INTERVAL, 1000).
 
 -define(GC_BATCH_PERIODIC, 500).
@@ -63,7 +63,7 @@
 -define(TICKS_RECENT, 1).
 
 % Periodically write the log to disk (10 min)
--define(WRITE_LOG_INTERVAL, 600_000).
+-define(WRITE_LOG_INTERVAL, 600000).
 
 % Names of ETS tables
 -define(FILE_ENTRY_TAB, filezcache_entries_tab).
