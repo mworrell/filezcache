@@ -24,7 +24,6 @@
 -behaviour(gen_server).
 
 -include_lib("kernel/include/file.hrl").
--include_lib("kernel/include/logger.hrl").
 
 -export([
     start_link/0,
@@ -471,12 +470,7 @@ repopulate() ->
         SavedEntries),
     % Check the file entry tab with the journal dir
     Entries = ets:tab2list(?FILE_ENTRY_TAB),
-    ?LOG_INFO(#{
-        in => filezcache,
-        text => <<"Populating filezcache with existing keys from the log">>,
-        result => ok,
-        count => length(Entries)
-    }),
+    error_logger:info_msg("Populating filezcache with existing keys from the log (~p entries)", [ length(Entries) ]),
     repopulate(Entries),
     scan_cache().
 
@@ -502,13 +496,7 @@ repopulate([ #filezcache_entry{ key = Key, filename = Filename, size = Size, che
 %% @doc Scan the cache directories, remove all files not in the log
 scan_cache() ->
     Dir = filezcache:data_dir(),
-    ?LOG_INFO(#{
-        in => filezcache,
-        text => <<"Removing unregistered files from the filezcache directory">>,
-        result => ok,
-        what => remove_unregistered,
-        directory => iolist_to_binary(Dir)
-    }),
+    error_logger:info_msg("Removing unregistered files from the filezcache directory: ~s", [ iolist_to_binary(Dir) ]),
     scan_dir(Dir).
 
 scan_dir(Dir) ->

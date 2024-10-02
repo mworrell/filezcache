@@ -28,7 +28,6 @@
 
 -record(state, {}).
 
--include_lib("kernel/include/logger.hrl").
 
 %% API
 add_handler() ->
@@ -42,42 +41,16 @@ init([]) ->
     {ok, #state{}}.
 
 handle_event({insert, Key}, State) ->
-    ?LOG_INFO(#{
-        in => filezcache,
-        text => <<"Insert key start">>,
-        result => ok,
-        what => insert_key,
-        key => Key
-    }),
+    error_logger:info_msg("insert(~p)~n", [Key]),
     {ok, State};
 handle_event({lookup, Key}, State) ->
-    ?LOG_INFO(#{
-        in => filezcache,
-        text => <<"Lookup key">>,
-        result => ok,
-        what => lookup_key,
-        key => Key
-    }),
+    error_logger:info_msg("lookup(~p)~n", [Key]),
     {ok, State};
 handle_event({delete, Key}, State) ->
-    ?LOG_INFO(#{
-        in => filezcache,
-        text => <<"Delete key">>,
-        result => ok,
-        what => delete_key,
-        key => Key
-    }),
+    error_logger:info_msg("delete(~p)~n", [Key]),
     {ok, State};
 handle_event({insert_ready, {Key, Size, Filename}}, State) ->
-    ?LOG_INFO(#{
-        in => filezcache,
-        text => <<"Insert key done">>,
-        result => ok,
-        what => insert_ready,
-        key => Key,
-        size => Size,
-        filename => Filename
-    }),
+    error_logger:info_msg("insert_ready(~p, ~p, ~p)~n", [Key, Size, Filename]),
     {ok, State}.
 
 handle_call(_Request, State) ->

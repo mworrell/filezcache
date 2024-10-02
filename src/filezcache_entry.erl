@@ -21,8 +21,6 @@
 
 -module(filezcache_entry).
 
--include_lib("kernel/include/logger.hrl").
-
 -behaviour(gen_statem).
 
 % api
@@ -270,7 +268,7 @@ idle({call, From}, {Fetch, Pid, Opts}, #state{key=Key, filename=Filename, size=S
             gen_statem:reply(From, {ok, {file, Size, Filename}}),
             {next_state, idle, opt_locker(State1, Pid, Opts), ?IDLE_TIMEOUT};
         {error, _} = Error ->
-            ?LOG_WARNING("Filezcache file error ~p on ~p", [Error, Filename]),
+            error_logger:warning_msg("Filezcache file error ~p on ~p", [Error, Filename]),
             {reply, Error, closing, State, 0}
     end;
 idle(cast, logged, #state{fd=FD} = State) ->
