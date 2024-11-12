@@ -444,14 +444,14 @@ ensure_tables() ->
     % Key to filename, #filezcache_entry{}
     ets:new(?FILE_ENTRY_TAB, [
             set,
-            protected,
+            public,
             named_table,
             {keypos, #filezcache_entry.key}
         ]),
     % Filename to key {filename, key}
     ets:new(?FILENAME_TAB, [
             set,
-            protected,
+            public,
             named_table,
             {keypos, 1}
         ]),
