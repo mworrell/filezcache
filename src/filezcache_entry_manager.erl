@@ -539,22 +539,27 @@ scan_files(Dir, [F|Fs]) ->
 
 %% @doc Delete an entry by key.
 delete_key(Key, #state{ lru = LRU } = State) ->
-    {_, LRU1} = filezcache_lru:take(Key, LRU),
-    Delta = case ets:lookup(?FILE_ENTRY_TAB, Key) of
+    LRU2 = case filezcache_lru:take(Key, LRU) of
+        {_, LRU1} -> LRU1;
+        error -> LRU
+    end,
+    case ets:lookup(?FILE_ENTRY_TAB, Key) of
         [] ->
-            0;
+            State#state{
+                lru = LRU2
+            };
         [ #filezcache_entry{ filename = Filename, size = Size } ] ->
             ok = delete_file(Key, Filename),
-            case Size of
+            Delta = case Size of
                 undefined -> 0;
                 _ -> Size
-            end
-    end,
-    State#state{
-        bytes = State#state.bytes - Delta,
-        lru = LRU1,
-        delete_count = State#state.delete_count + 1
-    }.
+            end,
+            State#state{
+                lru = LRU2,
+                bytes = State#state.bytes - Delta,
+                delete_count = State#state.delete_count + 1
+            }
+    end.
 
 %% @doc Delete an entry and its associated cache file.
 delete_file(Key, Filename) ->
@@ -599,32 +604,36 @@ do_gc(#state{ bytes = Bytes, lru = LRU } = State, N) ->
     end.
 
 drop_oldest_key(#state{ lru = LRU } = State) ->
-    {Key, _Value, LRU1} = filezcache_lru:pop(LRU),
-    case filezcache_store:lookup(Key) of
-        {ok, _Pid} ->
-            LRU2 = filezcache_lru:push(Key, State#state.tick, LRU1),
-            State#state{ lru = LRU2 };
-        {error, enoent} ->
-            case is_referred(Key, State) of
-                true ->
+    case filezcache_lru:pop(LRU) of
+        error ->
+            State;
+        {Key, _Value, LRU1} ->
+            case filezcache_store:lookup(Key) of
+                {ok, _Pid} ->
                     LRU2 = filezcache_lru:push(Key, State#state.tick, LRU1),
                     State#state{ lru = LRU2 };
-                false ->
-                    Delta = case ets:lookup(?FILE_ENTRY_TAB, Key) of
-                        [] ->
-                            0;
-                        [ #filezcache_entry{ filename = Filename, size = Size } ] ->
-                            ok = delete_file(Key, Filename),
-                            case Size of
-                                undefined -> 0;
-                                _ -> Size
-                            end
-                    end,
-                    State#state{
-                        bytes = State#state.bytes - Delta,
-                        lru = LRU1,
-                        evict_count = State#state.evict_count + 1
-                    }
+                {error, enoent} ->
+                    case is_referred(Key, State) of
+                        true ->
+                            LRU2 = filezcache_lru:push(Key, State#state.tick, LRU1),
+                            State#state{ lru = LRU2 };
+                        false ->
+                            Delta = case ets:lookup(?FILE_ENTRY_TAB, Key) of
+                                [] ->
+                                    0;
+                                [ #filezcache_entry{ filename = Filename, size = Size } ] ->
+                                    ok = delete_file(Key, Filename),
+                                    case Size of
+                                        undefined -> 0;
+                                        _ -> Size
+                                    end
+                            end,
+                            State#state{
+                                bytes = State#state.bytes - Delta,
+                                lru = LRU1,
+                                evict_count = State#state.evict_count + 1
+                            }
+                    end
             end
     end.
 
