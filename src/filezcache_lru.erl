@@ -79,7 +79,7 @@ push(Key, Value, LRU) ->
 %% @doc Pop element from head.
 %%
 %% Complexity: O(log(N))
--spec pop(lru()) -> {key(), value(), lru()}.
+-spec pop(lru()) -> {key(), value(), lru()} | error.
 pop(LRU) ->
     pop_oldest(LRU).
 
@@ -175,22 +175,27 @@ update_key(Key, Value, LRU) ->
             last         = NewIndex
            }.
 
--spec pop_oldest(lru()) -> {key(), value(), lru()}.
+-spec pop_oldest(lru()) -> {key(), value(), lru()} | error.
 pop_oldest(LRU) ->
     #lru{current_size = CurrentSize, usage = Usage, lookup_cache = LookupCache, last = Last } = LRU,
-    {_, OldestKey, NewUsage}  = gb_trees:take_smallest(Usage),
-    {{_, OldestValue}, NewLookupCache} = maps:take(OldestKey, LookupCache),
-    NewLast =
-        case CurrentSize of
-            1 -> 0;
-            _ -> Last
-        end,
-    NewLRU = LRU#lru{current_size = CurrentSize - 1,
-                     lookup_cache = NewLookupCache,
-                     usage        = NewUsage,
-                     last         = NewLast
-                    },
-    {OldestKey, OldestValue, NewLRU}.
+    case gb_trees:is_empty(Usage) of
+        true ->
+            error;
+        false ->
+            {_, OldestKey, NewUsage}  = gb_trees:take_smallest(Usage),
+            {{_, OldestValue}, NewLookupCache} = maps:take(OldestKey, LookupCache),
+            NewLast =
+                case CurrentSize of
+                    1 -> 0;
+                    _ -> Last
+                end,
+            NewLRU = LRU#lru{current_size = CurrentSize - 1,
+                             lookup_cache = NewLookupCache,
+                             usage        = NewUsage,
+                             last         = NewLast
+                            },
+            {OldestKey, OldestValue, NewLRU}
+    end.
 
 -spec apply_limits(lru()) ->  lru().
 apply_limits(#lru{max_size = unlimited} = LRU) ->
@@ -198,5 +203,7 @@ apply_limits(#lru{max_size = unlimited} = LRU) ->
 apply_limits(#lru{current_size = CS, max_size = MaxSize} = LRU) when CS =< MaxSize ->
     LRU;
 apply_limits(LRU) ->
-    {_, _, NewLRU} = pop_oldest(LRU),
-    apply_limits(NewLRU).
+    case pop_oldest(LRU) of
+        error -> LRU;
+        {_, _, NewLRU} -> apply_limits(NewLRU)
+    end.
