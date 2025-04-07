@@ -25,6 +25,7 @@ end_per_testcase(_TestCase, _Config) ->
 
 all() ->
     [
+        remove_unknown_key_test,
         cache_binary_test,
         cache_delete_test,
         cache_tmpfile_test,
@@ -36,6 +37,10 @@ all() ->
 %%--------------------------------------------------------------------
 %% TEST CASES
 %%--------------------------------------------------------------------
+
+remove_unknown_key_test(_Config) ->
+    ok = filezcache:delete(unknown_key),
+    ok.
 
 cache_binary_test(_Config) ->
     #{
