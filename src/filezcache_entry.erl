@@ -39,7 +39,7 @@
         gc/1
         ]).
 
-% gen_fsm
+% gen_statem
 -export([init/1, callback_mode/0, terminate/3, code_change/4]).
 
 % states
@@ -271,23 +271,23 @@ idle({call, From}, {Fetch, Pid, Opts}, #state{key=Key, filename=Filename, size=S
             {next_state, idle, opt_locker(State1, Pid, Opts), ?IDLE_TIMEOUT};
         {error, _} = Error ->
             ?LOG_WARNING("Filezcache file error ~p on ~p", [Error, Filename]),
-            {reply, Error, closing, State, 0}
+            {next_state, closing, State, [{reply, From, Error}, 0]}
     end;
 idle(cast, logged, #state{fd=FD} = State) ->
     _ = file:close(FD),
     {stop, normal, State#state{fd=undefined, filename=undefined}};
-idle(cast, timeout, State) ->
-    {next_state, closing, State};
+idle(timeout, _Timeout, State) ->
+    {next_state, closing, State, 0};
 idle(EventType, EventContent, State) ->
     handle_event(EventType, EventContent, idle, State).
 
 
 %% Closing down
-closing(cast, timeout, #state{fd=FD, filename=Filename} = State) when FD =/= undefined ->
+closing(timeout, 0, #state{fd=FD, filename=Filename} = State) when FD =/= undefined ->
     _ = file:close(FD),
     _ = file:delete(Filename),
     {stop, normal, State#state{fd=undefined, filename=undefined}};
-closing(cast, timeout, #state{filename=Filename} = State) ->
+closing(timeout, 0, #state{filename=Filename} = State) ->
     _ = file:delete(Filename),
     {stop, normal, State#state{filename=undefined}};
 closing(EventType, EventContent, State) ->
